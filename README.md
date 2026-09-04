@@ -72,22 +72,37 @@ result = agent.run("帮我分析这个项目")
 
 ## 目录
 
+源码按**领域**组织在 `agentorchestra/` 下（经典扁平导入名仍可用，见下）：
+
 ```
 agentorchestra/
-├── agents/           # Agent 范式（Simple/ReAct/Reflection/PlanSolve/Loop + 工厂）
-├── core/             # 核心运行时（LLM/Config/Message/Agent 基类/可靠性/运维/追踪）
-├── tools/            # 工具系统（Tool 基类/注册表/内置工具/子代理过滤）
-├── context/          # 上下文工程（历史/Token 计数/GSSC/截断）
-├── observability/    # 可观测性（TraceLogger + Prometheus 指标 + 可选 OTLP）
-├── skills/           # Skills 知识外化（SkillLoader/Skill）
-├── memory/           # 跨会话持久记忆（Manager/混合检索/Summarizer/工具）
-├── ontology/         # 企业级 Ontology（语义/动能/存储/治理/流程/工具生成）
-├── state/            # 持久化与恢复（Checkpoint/WAL/Thread/Interrupt/Snapshot）
-├── tx/               # 事务运行时（Coordinator/幂等/补偿/DLQ/乐观锁）
-├── orchestration/    # Agent 图/DAG 通信（Graph/Inbox/节点/Scheduler）
-├── governance/       # 对象身份与权限（Identity/ACL/Permission/CAS/WORM）
-└── tenancy/          # 多租户（Tenant 上下文/配额/用量导出）
+├── runtime/              # 运行时域
+│   ├── agents/           # Agent 范式（Simple/ReAct/Reflection/PlanSolve/Loop + 工厂）
+│   ├── core/             # 核心运行时（LLM/Config/Message/Agent 基类/可靠性/运维/追踪）
+│   └── context/          # 上下文工程（历史/Token 计数/GSSC/截断）
+├── capability/           # 能力域
+│   ├── tools/            # 工具系统（Tool 基类/注册表/内置工具/子代理过滤）
+│   ├── skills/           # Skills 知识外化（SkillLoader/Skill）
+│   └── memory/           # 跨会话持久记忆（Manager/混合检索/Summarizer/工具）
+├── ontology/             # 企业级 Ontology（语义/动能/存储/治理/流程/工具生成）
+├── orchestration/        # 编排域
+│   ├── orch/             # Agent 图/DAG 通信（Graph/Inbox/节点/Scheduler）
+│   └── state/            # 持久化与恢复（Checkpoint/WAL/Thread/Interrupt/Snapshot）
+├── governance/           # 治理域
+│   ├── govern/           # 对象身份与权限（Identity/ACL/Permission/CAS/WORM）
+│   ├── tx/               # 事务运行时（Coordinator/幂等/补偿/DLQ/乐观锁）
+│   └── tenancy/          # 多租户（Tenant 上下文/配额/用量导出）
+├── observability/        # 可观测性（TraceLogger + Prometheus 指标 + 可选 OTLP）
+├── components.py         # 统一装配门面（唯一推荐的横切装配入口）
+├── version.py
+└── __init__.py
 ```
+
+> **兼容性**：经典扁平公共 API 保持不变——`agentorchestra.core.*`、
+> `agentorchestra.tools.*`、`agentorchestra.state.*`、`agentorchestra.tx.*`、
+> `agentorchestra.orchestration.*` 等导入会自动映射到上面的领域化物理路径
+> （见 `agentorchestra/_legacy.py`）。同一模块无论走经典名还是新物理名，
+> 得到的是同一个模块对象。
 
 ## 文档
 

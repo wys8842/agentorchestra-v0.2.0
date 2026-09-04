@@ -36,7 +36,7 @@ class MaterializationTarget:
         注意：此方法提供"物化动作包成 TxAction"的能力；默认业务路径不强制使用
         （保留现有 materialize 直写语义，向后兼容）。
         """
-        from ...tx.context import TxAction
+        from agentorchestra.governance.tx.context import TxAction
 
         def _execute_fn(params, _tx_ctx=None) -> bool:
             op = params.get("operation", "update")

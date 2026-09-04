@@ -7,7 +7,7 @@
 
 from typing import Any, Callable, Dict, List, Optional
 
-from ...tools.base import ToolParameter
+from agentorchestra.capability.tools.base import ToolParameter
 
 
 class Function:

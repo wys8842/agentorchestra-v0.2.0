@@ -4,31 +4,34 @@ Symphony 是**分层组件式**框架：Agent/工具层在上，数据/存储层
 
 ## 分层总览
 
+物理上按**领域目录**组织（agentorchestra/ 下）；经典扁平组件名保留为公共 API
+（经 `agentorchestra/_legacy.py` 兼容层映射，见文末说明）：
+
 ```
 ┌───────────────────────────────────────────────────────────┐
 │  应用层（examples / 业务装配）                              │
 │    components.py（装配门面）——唯一推荐的横切装配入口          │
 ├───────────────────────────────────────────────────────────┤
-│  编排层                                                     │
-│    orchestration  Agent 图/DAG 通信（Graph/Inbox）          │
-│    tx             事务运行时（Coordinator/补偿/DLQ）         │
+│  runtime/          运行时域                                 │
+│    agents · core · context                                 │
+│      （经典名 agentorchestra.agents / .core / .context）     │
 ├───────────────────────────────────────────────────────────┤
-│  智能体层                                                   │
-│    agents          Agent 范式（Simple/ReAct/Reflection/…）  │
-│    core            Agent 基类 / LLM / Config / 追踪 / 指标   │
-│    context         上下文工程（历史/Token/GSSC）             │
-│    tools           工具系统（Tool/Registry/内置工具）        │
+│  capability/       能力域                                   │
+│    tools · skills · memory                                 │
+│      （经典名 agentorchestra.tools / .skills / .memory）     │
 ├───────────────────────────────────────────────────────────┤
-│  语义/业务层                                                │
-│    ontology        Ontology 引擎（语义/动能/存储/流程/治理）  │
-│    skills          Skills 知识外化                          │
-│    memory          跨会话持久记忆                           │
+│  ontology/         语义/业务层（语义/动能/存储/流程/治理）     │
 ├───────────────────────────────────────────────────────────┤
-│  持久化/基础设施层                                          │
-│    state           P0 持久化（Checkpoint/WAL/Thread/…）     │
-│    governance      P3 对象身份与权限（Identity/ACL/WORM）    │
-│    tenancy         P6 多租户（Tenant/配额/用量）             │
-│    observability   P5 可观测（Prometheus 文本/OTLP/JSONL）   │
+│  orchestration/    编排域                                   │
+│    orch （经典 agentorchestra.orchestration 图/DAG 通信）    │
+│    state （经典 agentorchestra.state 持久化）                │
+├───────────────────────────────────────────────────────────┤
+│  governance/       治理域                                   │
+│    govern （经典 agentorchestra.governance 身份/权限）        │
+│    tx      （经典 agentorchestra.tx 事务运行时）              │
+│    tenancy （经典 agentorchestra.tenancy 多租户）             │
+├───────────────────────────────────────────────────────────┤
+│  observability/    可观测（Prometheus 文本/OTLP/JSONL）       │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -88,3 +91,25 @@ Components.register_metrics_collector(lambda: MyCollector())
 - 每组件独立测试目录（tests/<component>/）
 - 组件间用接口/抽象交互；替换实现用 `Components.register_*` + `Components.reset()`
 - 持久层可切 InMemory 后端（无 DB 依赖）跑单测
+
+## 路径兼容（经典扁平名 → 领域化路径）
+
+| 经典导入名 | 新物理路径（规范） |
+|-----------|-------------------|
+| `agentorchestra.agents.*` | `agentorchestra.runtime.agents.*` |
+| `agentorchestra.context.*` | `agentorchestra.runtime.context.*` |
+| `agentorchestra.core.*` | `agentorchestra.runtime.core.*` |
+| `agentorchestra.tools.*` | `agentorchestra.capability.tools.*` |
+| `agentorchestra.skills.*` | `agentorchestra.capability.skills.*` |
+| `agentorchestra.memory.*` | `agentorchestra.capability.memory.*` |
+| `agentorchestra.orchestration.*` | `agentorchestra.orchestration.orch.*` |
+| `agentorchestra.state.*` | `agentorchestra.orchestration.state.*` |
+| `agentorchestra.governance.*` | `agentorchestra.governance.govern.*` |
+| `agentorchestra.tx.*` | `agentorchestra.governance.tx.*` |
+| `agentorchestra.tenancy.*` | `agentorchestra.governance.tenancy.*` |
+| `agentorchestra.observability.*` | `agentorchestra.observability.*` |
+| `agentorchestra.ontology.*` | `agentorchestra.ontology.*` |
+
+`agentorchestra` 包导入时自动安装兼容 finder（`_legacy.py`），经典名与规范名解析到
+**同一模块对象**（不重复加载、类身份一致），因此存量代码/文档/测试无需改动。
+

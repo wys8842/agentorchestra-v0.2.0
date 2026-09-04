@@ -11,7 +11,7 @@
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from ...tools.base import ToolParameter
+from agentorchestra.capability.tools.base import ToolParameter
 
 
 class ActionType:
@@ -98,7 +98,7 @@ class ActionType:
 
         # 观测埋点：动作指标
         try:
-            from ...core.metrics import get_metrics
+            from agentorchestra.runtime.core.metrics import get_metrics
             get_metrics().record_action_execution(self.api_name, error=bool(errors))
         except Exception:
             pass

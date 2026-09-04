@@ -9,7 +9,8 @@
 
 from typing import Any, Dict, List, Optional, Set
 
-from ...tools.base import ToolParameter
+from agentorchestra.capability.tools.base import ToolParameter
+
 from .link_type import LinkType
 
 

@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..core.utils import duration_seconds, generate_session_id
+from agentorchestra.runtime.core.utils import duration_seconds, generate_session_id
 
 
 class TraceLogger:

@@ -1,24 +1,31 @@
-"""agentorchestra.governance - 对象身份与权限（M3 / P3）。
+"""agentorchestra.governance - 治理域。
 
-路线图 §5。设计见 docs/superpowers/specs/2026-09-04-m3-object-identity-acl-design.md
+收纳治理相关子包：
 
-公共 API：
-- IdentityService / IdentityContext / current_principal / current_roles
-- ACLManager / ACLRule
-- PermissionChecker / PermissionDenied
-- ObjectCAS
+- ``govern``   对象身份与权限：Identity / ACL / Permission / CAS
+- ``tx``       事务运行时：Coordinator / 幂等 / 补偿 / DLQ / 乐观锁
+- ``tenancy``  多租户：Tenant / 配额 / 用量
+
+经典治理公共 API（``from agentorchestra.governance import ACLManager``）经由
+``govern`` 子包再导出，保持向后兼容。
 """
 
-from .acl import ACLManager, ACLRule
-from .cas import ObjectCAS
-from .identity import (
+from .govern import (  # noqa: F401
+    ACLManager,
+    ACLRule,
     IdentityContext,
     IdentityService,
+    ObjectCAS,
+    PermissionChecker,
+    PermissionDenied,
+    acl,
+    cas,
     current_principal,
     current_roles,
     get_identity_service,
+    identity,
+    permission,
 )
-from .permission import PermissionChecker, PermissionDenied
 
 __all__ = [
     "IdentityContext",

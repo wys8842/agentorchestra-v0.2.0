@@ -64,7 +64,7 @@ class ObjectStore:
     def _current_principal(self) -> str:
         """读取当前 principal（ContextVar 优先；兜底 anonymous）。"""
         try:
-            from ...governance.identity import current_principal
+            from agentorchestra.governance.govern.identity import current_principal
             return current_principal()
         except Exception:
             return "anonymous"
@@ -245,7 +245,7 @@ class ObjectStore:
 
         # M3：CAS 校验（版本不一致 → TxConflict）
         if expected_version is not None:
-            from ...tx.context import TxConflict
+            from agentorchestra.governance.tx.context import TxConflict
             cur_ver = int(current.get("version", 0) or 0)
             if cur_ver != expected_version:
                 raise TxConflict(

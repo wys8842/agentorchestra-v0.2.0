@@ -53,7 +53,7 @@ class _Components:
         with self._lock:
             if self._state_store is not None:
                 return self._state_store()
-        from .state import get_default_store
+        from agentorchestra.orchestration.state import get_default_store
         return get_default_store()
 
     # ---------------- 可观测性 ----------------
@@ -94,7 +94,7 @@ class _Components:
         with self._lock:
             if self._tracer is not None:
                 return self._tracer()
-        from .core.tracing import get_tracer
+        from agentorchestra.runtime.core.tracing import get_tracer
         return get_tracer()
 
     # ---------------- 装配组合 ----------------
@@ -116,7 +116,7 @@ class _Components:
         with self._lock:
             self._otel_exporter = lambda: exporter
         # 接入全局 Tracer
-        from .core.tracing import get_tracer
+        from agentorchestra.runtime.core.tracing import get_tracer
         get_tracer(exporter=exporter)
         return exporter
 

@@ -6,9 +6,10 @@
 
 from typing import Any, Dict, List, Optional
 
-from ..tools.base import Tool, ToolParameter
-from ..tools.errors import ToolErrorCode
-from ..tools.response import ToolResponse
+from agentorchestra.capability.tools.base import Tool, ToolParameter
+from agentorchestra.capability.tools.errors import ToolErrorCode
+from agentorchestra.capability.tools.response import ToolResponse
+
 from .kinetic.action import ActionType
 from .kinetic.function import Function
 from .semantic.object_type import ObjectType

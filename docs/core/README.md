@@ -27,7 +27,7 @@
 | `monitor.py` | `MonitorServer`：监控 HTTP 端点（/metrics /health /traces） |
 | `utils.py` | 通用工具：时长度量 / 工具参数解析 / 序列化辅助 |
 
-> 模块级导出见 [core/__init__.py](../../agentorchestra/core/__init__.py)，另含 `StreamStats`（`LLMResponse` 的向后兼容别名）。
+> 模块级导出见 [core/__init__.py](../../agentorchestra/runtime/core/__init__.py)，另含 `StreamStats`（`LLMResponse` 的向后兼容别名）。经典导入路径 `agentorchestra.core.*` 由 `_legacy.py` 兼容层映射到 `agentorchestra.runtime.core.*`。
 
 ## 核心概念
 

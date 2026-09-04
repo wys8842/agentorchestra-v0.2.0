@@ -4,8 +4,6 @@ M1（P1）后：支持两种执行引擎：
 - 默认：纯 saga（内存），向后兼容旧 API 行为（无 DB 依赖）
 - coordinator 模式：委托给 `agentorchestra.tx.TransactionCoordinator`（幂等 + WAL + 补偿 + DLQ）
 
-设计见 docs/superpowers/specs/2026-09-03-m1-transaction-runtime-design.md §7
-
 补偿模式（Saga）：
   动作A(成功) → 动作B(成功) → 动作C(失败)
     ↓ 回滚
@@ -98,7 +96,7 @@ class TransactionManager:
              "compensated": [已补偿动作名], "errors"}
         """
         if self.coordinator is not None:
-            from agentorchestra.tx.sync import run_sync
+            from agentorchestra.governance.tx.sync import run_sync
             return run_sync(lambda: self._execute_via_coordinator(steps))
 
         return self._execute_saga(steps, ctx)

@@ -1,7 +1,7 @@
 {
   "meta": {
     "framework": "AgentOrchestra",
-    "date": "2026-09-02 17:26:25",
+    "date": "2026-09-04 17:44:07",
     "total_tests": 26,
     "passed": 26,
     "failed": 0
@@ -184,7 +184,7 @@
       "agent_type": "direct",
       "task": "7500次混合工具调用",
       "result": "PASS",
-      "detail": "5100 次，0.16s",
+      "detail": "5100 次，0.09s",
       "calls_per_tool": {
         "Weather": 1500,
         "Discount": 1000,
@@ -193,7 +193,7 @@
         "CallComputeOrderTotal": 600,
         "QueryOrder": 400
       },
-      "ops_per_sec": 32484
+      "ops_per_sec": 53757
     },
     {
       "name": "工具并发调用",
@@ -208,7 +208,7 @@
       "agent_type": "direct",
       "task": "8线程并发混合工具",
       "result": "PASS",
-      "detail": "0.05s，0 错误",
+      "detail": "0.02s，0 错误",
       "threads": 8,
       "errors": 0
     },
@@ -325,7 +325,7 @@
       "agent_type": "Workflow",
       "task": "1000次双节点工作流",
       "result": "PASS",
-      "detail": "0.06s"
+      "detail": "0.03s"
     },
     {
       "name": "事务补偿",
@@ -346,9 +346,9 @@
       "agent_type": "observability",
       "task": "5000条事件落盘",
       "result": "PASS",
-      "detail": "0.97s, 874KB",
+      "detail": "0.68s, 875KB",
       "events": 5000,
-      "jsonl_kb": 874
+      "jsonl_kb": 875
     }
   ]
 }

@@ -53,7 +53,7 @@ class AuditManager:
 
     def _async_append(self, principal, resource, action, detail, success) -> None:
         """异步 append 到后端（fire-and-forget）。"""
-        from ...state.records import AuditEntry
+        from agentorchestra.orchestration.state.records import AuditEntry
 
         entry = AuditEntry(
             principal=principal, resource=resource, action=action,

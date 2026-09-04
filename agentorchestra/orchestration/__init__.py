@@ -1,21 +1,40 @@
-"""agentorchestra.orchestration - Agent 通信升到图/DAG（M2 / P2）。
+"""agentorchestra.orchestration - 编排域。
 
-路线图 §4。设计见 docs/superpowers/specs/2026-09-04-m2-agent-graph-design.md
+收纳 Agent 图/DAG 通信（``orch``）与持久化/恢复（``state``）：
 
-公共 API：
-- Graph / GraphResult / Edge
-- AgentNode / RouterNode / MergeNode / FunctionalNode
-- Inbox / DeliveryManager / GraphScheduler
-- NodeEvent / NodeEventType / DeliveryEvent
+- ``orch``   Agent 图/DAG：Graph / Inbox / DeliveryManager / Scheduler / Nodes
+- ``state``  持久化与恢复：Checkpoint / WAL / Thread / Interrupt / Snapshot
+
+经典编排公共 API（``from agentorchestra.orchestration import Graph``）经由
+``orch`` 子包再导出，保持向后兼容。
 """
 
-from .delivery import DeliveryManager
-from .events import DeliveryEvent, NodeEvent, NodeEventType
-from .graph import Edge, Graph, GraphResult, Node, NodeContext, NodeOutput
-from .inbox import Inbox
-from .migration import TaskToolGraphAdapter
-from .nodes import AgentNode, FunctionalNode, MergeNode, RouterNode
-from .scheduler import GraphScheduler
+from .orch import (  # noqa: F401
+    AgentNode,
+    DeliveryEvent,
+    DeliveryManager,
+    Edge,
+    FunctionalNode,
+    Graph,
+    GraphResult,
+    GraphScheduler,
+    Inbox,
+    MergeNode,
+    Node,
+    NodeContext,
+    NodeEvent,
+    NodeEventType,
+    NodeOutput,
+    RouterNode,
+    TaskToolGraphAdapter,
+    delivery,
+    events,
+    graph,
+    inbox,
+    migration,
+    nodes,
+    scheduler,
+)
 
 __all__ = [
     "Graph",

@@ -16,7 +16,7 @@ import time
 import urllib.request
 from typing import Any, Dict, Optional
 
-from ..core.tracing import Span, SpanExporter
+from agentorchestra.runtime.core.tracing import Span, SpanExporter
 
 logger = logging.getLogger("agentorchestra.observability.otel_exporter")
 

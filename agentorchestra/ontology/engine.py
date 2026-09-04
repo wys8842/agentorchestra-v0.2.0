@@ -11,8 +11,9 @@
 
 from typing import Any, Dict, List, Optional
 
-from ..tools.base import Tool
-from ..tools.registry import ToolRegistry
+from agentorchestra.capability.tools.base import Tool
+from agentorchestra.capability.tools.registry import ToolRegistry
+
 from .governance.audit import AuditManager
 from .governance.branching import BranchManager
 from .governance.security import SecurityContext, SecurityManager
