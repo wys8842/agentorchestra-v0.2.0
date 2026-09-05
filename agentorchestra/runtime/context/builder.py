@@ -129,6 +129,18 @@ class ContextBuilder:
 
         return final_context
 
+    def _tfidf_vector(self, text: str) -> Dict[str, float]:
+        """简单 TF-IDF 向量化（内存中训练）"""
+        if not hasattr(self, "_rfidf"):
+            self._rfidf = TFIDFRanker()
+        return self._rfidf.vectorize(text)
+
+    def _cosine_similarity(self, v1: Dict, v2: Dict) -> float:
+        """余弦相似度"""
+        if not hasattr(self, "_rfidf"):
+            self._rfidf = TFIDFRanker()
+        return self._rfidf.cosine_similarity(v1, v2)
+
     def _gather(
         self,
         user_query: str,
@@ -177,29 +189,32 @@ class ContextBuilder:
         packets: List[ContextPacket],
         user_query: str
     ) -> List[ContextPacket]:
-        """Select: 基于分数与预算的筛选"""
-        # 1) 计算相关性（关键词重叠）
-        query_tokens = set(user_query.lower().split())
+        """Select: 基于语义相关性与新近性的筛选
+
+        使用混合评分：
+        - TF-IDF 余弦相似度（语义相关性）
+        - 时间衰减（新近性）
+        - 重要性权重（业务优先级）
+        """
+        # 1) 计算 TF-IDF 余弦相似度
+        query_vec = self._tfidf_vector(user_query)
         for packet in packets:
-            content_tokens = set(packet.content.lower().split())
-            if len(query_tokens) > 0:
-                overlap = len(query_tokens & content_tokens)
-                packet.relevance_score = overlap / len(query_tokens)
-            else:
-                packet.relevance_score = 0.0
+            packet_vec = self._tfidf_vector(packet.content)
+            packet.relevance_score = self._cosine_similarity(query_vec, packet_vec)
 
         # 2) 计算新近性（指数衰减）
         def recency_score(ts: datetime) -> float:
             """按时间指数衰减计算新近性得分（1 小时时间尺度）"""
             delta = max((datetime.now() - ts).total_seconds(), 0)
-            tau = 3600  # 1小时时间尺度，可暴露到配置
+            tau = 3600  # 1小时时间尺度
             return math.exp(-delta / tau)
 
-        # 3) 计算复合分：0.7*相关性 + 0.3*新近性
+        # 3) 计算复合分：0.6*相关性 + 0.3*新近性 + 0.1*重要性
         scored_packets: List[Tuple[float, ContextPacket]] = []
         for p in packets:
             rec = recency_score(p.timestamp)
-            score = 0.7 * p.relevance_score + 0.3 * rec
+            importance = p.metadata.get("importance", 0.5)
+            score = 0.6 * p.relevance_score + 0.3 * rec + 0.1 * importance
             scored_packets.append((score, p))
 
         # 4) 系统指令单独拿出，固定纳入
@@ -207,12 +222,10 @@ class ContextBuilder:
         remaining = [p for (s, p) in sorted(scored_packets, key=lambda x: x[0], reverse=True)
                      if p.metadata.get("type") != "instructions"]
 
-        # 5) 依据 min_relevance 过滤（对非系统包）
-        # 知识图谱检索结果（knowledge_base）不参与相关性过滤，强制保留
+        # 5) 知识图谱检索结果（knowledge_base）不参与相关性过滤
         knowledge_packets = [p for p in remaining if p.metadata.get("type") == "knowledge_base"]
         remaining = [p for p in remaining if p.metadata.get("type") != "knowledge_base"]
         filtered = [p for p in remaining if p.relevance_score >= self.config.min_relevance]
-        # 知识包按分数排序（优先纳入）
         filtered = sorted(knowledge_packets, key=lambda x: x.relevance_score, reverse=True) + filtered
 
         # 6) 按预算填充
@@ -329,3 +342,74 @@ def count_tokens(text: str) -> int:
         # 降级方案：粗略估算（1 token ≈ 4 字符）
         return len(text) // 4
 
+
+
+class TFIDFRanker:
+    """轻量级 TF-IDF 排序器（不依赖外部库）"""
+
+    def __init__(self, stopwords: Optional[set] = None):
+        self._stopwords = stopwords or self._default_stopwords()
+        self._idf_cache: Dict[str, float] = {}
+        self._doc_freq: Dict[str, int] = {}
+        self._total_docs = 0
+
+    @staticmethod
+    def _default_stopwords() -> set:
+        return {
+            "the", "a", "an", "is", "are", "was", "were",
+            "of", "in", "to", "for", "and", "or", "but",
+            "的", "是", "在", "和", "了", "有", "也",
+        }
+
+    def fit(self, documents: List[str]) -> None:
+        """训练 IDF（基于文档集合）"""
+        self._total_docs = len(documents)
+        for doc in documents:
+            seen = set()
+            for word in self._tokenize(doc):
+                if word not in seen:
+                    self._doc_freq[word] = self._doc_freq.get(word, 0) + 1
+                    seen.add(word)
+
+        # 计算 IDF
+        import math
+        for word, df in self._doc_freq.items():
+            self._idf_cache[word] = math.log(
+                (self._total_docs + 1) / (df + 1)
+            ) + 1
+
+    def _tokenize(self, text: str) -> List[str]:
+        """简单分词（按空白 + 过滤停用词）"""
+        tokens = re.findall(r"\w+", text.lower())
+        return [t for t in tokens if t not in self._stopwords and len(t) > 1]
+
+    def vectorize(self, text: str) -> Dict[str, float]:
+        """向量化文本"""
+        tokens = self._tokenize(text)
+        if not tokens:
+            return {}
+        tf: Dict[str, int] = {}
+        for t in tokens:
+            tf[t] = tf.get(t, 0) + 1
+
+        # TF-IDF = tf * idf
+        vec = {}
+        for word, count in tf.items():
+            idf = self._idf_cache.get(word, 1.0)
+            vec[word] = count * idf
+        return vec
+
+    @staticmethod
+    def cosine_similarity(v1: Dict[str, float], v2: Dict[str, float]) -> float:
+        """计算余弦相似度"""
+        if not v1 or not v2:
+            return 0.0
+        common = set(v1.keys()) & set(v2.keys())
+        if not common:
+            return 0.0
+        dot = sum(v1[k] * v2[k] for k in common)
+        norm1 = sum(v * v for v in v1.values()) ** 0.5
+        norm2 = sum(v * v for v in v2.values()) ** 0.5
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        return dot / (norm1 * norm2)

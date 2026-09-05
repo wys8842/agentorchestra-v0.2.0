@@ -4,14 +4,57 @@
 - Layer 1: Metadata（启动时加载，~100 tokens/skill）
 - Layer 2: SKILL.md body（按需加载，~2000+ tokens）
 - Layer 3: Resources（可选，按需）
+
+版本控制：
+- 支持 semver 版本号
+- 依赖管理（requires/optional_dependencies）
+- 兼容性检查
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 import yaml
+
+
+@dataclass
+class SkillVersion:
+    """Semver 版本号"""
+    major: int
+    minor: int
+    patch: int
+    pre_release: str = ""
+
+    @classmethod
+    def parse(cls, version_str: str) -> "SkillVersion":
+        """解析 semver 字符串"""
+        match = re.match(
+            r"^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$", version_str.strip()
+        )
+        if not match:
+            raise ValueError(f"invalid semver: {version_str}")
+        return cls(
+            major=int(match.group(1)),
+            minor=int(match.group(2)),
+            patch=int(match.group(3)),
+            pre_release=match.group(4) or "",
+        )
+
+    def __str__(self) -> str:
+        base = f"{self.major}.{self.minor}.{self.patch}"
+        return f"{base}-{self.pre_release}" if self.pre_release else base
+
+    def is_compatible(self, required: "SkillVersion") -> bool:
+        """检查与所需版本是否兼容（major 必须相同，minor >= 所需）"""
+        if self.major != required.major:
+            return False
+        if self.minor < required.minor:
+            return False
+        if self.minor == required.minor and self.patch < required.patch:
+            return False
+        return True
 
 
 @dataclass
@@ -22,6 +65,9 @@ class Skill:
     body: str
     path: Path
     dir: Path
+    version: Optional[SkillVersion] = None
+    dependencies: List[str] = field(default_factory=list)
+    optional_dependencies: List[str] = field(default_factory=list)
 
     @property
     def scripts(self) -> List[Path]:
@@ -101,11 +147,23 @@ class SkillLoader:
                 continue
 
             name = metadata.get("name", skill_dir.name)
+            version_str = metadata.get("version", "1.0.0")
+            try:
+                version = SkillVersion.parse(version_str)
+            except ValueError:
+                version = SkillVersion(1, 0, 0)
+
+            deps = metadata.get("requires", [])
+            optional_deps = metadata.get("optional_dependencies", [])
+
             self.metadata_cache[name] = {
                 "name": name,
                 "description": metadata.get("description", ""),
                 "path": skill_md,
-                "dir": skill_dir
+                "dir": skill_dir,
+                "version": version,
+                "dependencies": deps,
+                "optional_dependencies": optional_deps,
             }
 
     def _parse_frontmatter_only(self, path: Path) -> Optional[Dict]:

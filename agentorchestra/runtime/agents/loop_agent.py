@@ -724,6 +724,56 @@ class LoopAgent(Agent):
 
     # ==================== 工具管理 ====================
 
+    # ---------------- 子子代理集成 ----------------
+
+    def run_as_subagent(self, task: str, max_steps: Optional = = 5,
+                       return_summary: bool = True) -> Dict[str, Any]:
+        """作为子子代理运行（TaskTool 集成）
+
+        Args:
+            task: 子任务
+            max_steps: 覆盖最大步数
+            return_summary: 是否返回摘要
+
+        Returns:
+            {"summary": str, "metadata": dict}
+        """
+        # 保存原始配置
+        original_max_steps = self.max_steps
+        if max_steps is not None:
+            self.max_steps = max_steps
+
+        try:
+            result = self.run(task)
+            return {
+                "summary": self._summarize_result(result),
+                "metadata": {
+                    "agent_name": self.name,
+                    "agent_type": self.__class__.__name__,
+                    "result": result,
+                },
+            }
+        finally:
+            self.max_steps = original_max_steps
+
+    def _summarize_result(self, result: str, max_length: int = 200) -> str:
+        """总结结果（截断 + 关键句提取）"""
+        if not result or len(result) <= max_length:
+            return result
+        return result[:max_length] + "..."
+
+    async def arun_as_subagent(self, task: str, **kwargs) -> Dict[str, Any]:
+        """异步子子代理调用"""
+        result = await self.arun(task, **kwargs)
+        return {
+            "summary": self._summarize_result(result),
+            "metadata": {
+                "agent_name": self.name,
+                "agent_type": self.__class__.__name__,
+                "result": result,
+            },
+        }
+
     def register_tool(self, tool, auto_expand: bool = True) -> None:
         """注册工具"""
         if not self.tool_registry:

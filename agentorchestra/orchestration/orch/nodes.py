@@ -111,4 +111,39 @@ class FunctionalNode(Node):
         return self._fn(message, ctx)
 
 
-__all__ = ["AgentNode", "RouterNode", "MergeNode", "FunctionalNode"]
+class SubgraphNode(Node):
+    """子图节点 - 内部包含完整子图，外部作为单节点使用
+
+    Attributes:
+        name: 节点名
+        entry: 子图入口节点
+        nodes: 子图所有节点（{prefix.name: Node）
+        edges: 子图所有边
+        exits: 出口映射 {子图内部节点 -> 外部目标节点名}
+    """
+
+    def __init__(
+        self,
+        name: str,
+        entry: str,
+        nodes: Dict[str, "Node"],
+        edges: Dict[str, List["Edge"]],
+        exits: Dict[str, str],
+    ):
+        self.name = name
+        self._entry = entry
+        self._nodes = nodes
+        self._edges = edges
+        self._exits = exits
+
+    async def run(self, message: Dict[str, Any], ctx: NodeContext) -> NodeOutput:
+        """子图节点作为单一节点：返回转发消息到子图入口"""
+        # 实际执行由 GraphScheduler 接管（在 _process_one 中识别）
+        # 这里仅作为标记节点
+        return NodeOutput.ok(
+            result={"subgraph": self.name, "forwarded": True},
+            data={"_subgraph": self.name, "_entry": self._entry, "_exits": self._exits},
+        )
+
+
+__all__ = ["AgentNode", "RouterNode", "MergeNode", "FunctionalNode", "SubgraphNode"]
