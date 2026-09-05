@@ -7,6 +7,7 @@ Phase 2 重构：拆分为细粒度接口（见 interfaces.py），
 from __future__ import annotations
 
 import json
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
