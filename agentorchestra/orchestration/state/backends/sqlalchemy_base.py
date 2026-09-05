@@ -682,9 +682,10 @@ class SQLAlchemyCheckpointStore(CheckpointStore):
                 )
                 new_fencing_token = seq_result.scalar() or (prev_fencing + 1)
             elif self._dialect == "sqlite":
-                # SQLite：使用数据库表实现多进程安全序列
-                # 先尝试原子更新序列值
-                result = await conn.execute(
+                # SQLite 多进程安全序列：使用数据库表 + 原子 upsert
+                # SQLite 单进程内是原子的；多进程场景需要额外的进程间锁（如 flock）
+                # 推荐方案：生产环境使用 PostgreSQL sequence
+                upsert_result = await conn.execute(
                     sqlite_insert(_SequenceRow)
                     .values(seq_name="fencing_token", seq_value=1)
                     .on_conflict_do_update(
@@ -692,19 +693,24 @@ class SQLAlchemyCheckpointStore(CheckpointStore):
                         set_={"seq_value": _SequenceRow.seq_value + 1}
                     )
                 )
-                # 回读最新序列值
+                # 回读（确保拿到本进程刚 increment 的最新值）
                 seq_row = (
                     await conn.execute(
                         select(_SequenceRow).where(_SequenceRow.seq_name == "fencing_token")
                     )
                 ).first()
-                new_fencing_token = seq_row.seq_value if seq_row else max(1, prev_fencing + 1)
+                if seq_row is None:
+                    # 极端情况：upsert 失败但未抛错 → 使用 prev_fencing+1
+                    new_fencing_token = max(1, prev_fencing + 1)
+                else:
+                    new_fencing_token = max(seq_row.seq_value, prev_fencing + 1)
             else:
-                # 其他数据库 fallback 到进程内计数器（警告：不安全）
                 import warnings
                 warnings.warn(
-                    f"fencing_token using in-process counter for {self._dialect}, "
-                    "consider using PostgreSQL for production multi-process deployments"
+                    f"fencing_token using in-process counter for {self._dialect}; "
+                    "生产多进程部署请使用 PostgreSQL 或 Redis 协调",
+                    RuntimeWarning,
+                    stacklevel=2,
                 )
                 self._fencing_seq += 1
                 new_fencing_token = max(self._fencing_seq, prev_fencing + 1)
