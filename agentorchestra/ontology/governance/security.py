@@ -120,12 +120,6 @@ class PermissionRule:
         # 动作匹配
         if self.action != "*" and self.action != action:
             return False
-        # 字段级检查
-        if self.field_pattern and field:
-            if not self._match_pattern(self.field_pattern, field):
-                return False
-        elif self.field_pattern and not field:
-            return False
 
         # 角色检查（含继承）
         effective_roles = {ctx.principal}
@@ -137,6 +131,11 @@ class PermissionRule:
 
         if not any(r in effective_roles for r in self.roles):
             return False
+
+        # 字段级检查（在角色检查后，避免字段限制过于严格）
+        if self.field_pattern:
+            if not field or not self._match_pattern(self.field_pattern, field):
+                return False
 
         # ABAC 条件
         if self.conditions:
@@ -219,9 +218,18 @@ class SecurityManager:
         resource: str = "*",
         action: str = "*",
         conditions: Optional[Dict[str, Any]] = None,
+        field_pattern: Optional[str] = None,
     ) -> None:
-        """便捷授权：允许角色对资源执行动作"""
-        self.add_rule(PermissionRule(resource, action, roles, conditions))
+        """便捷授权：允许角色对资源执行动作
+
+        Args:
+            roles: 允许的角色列表
+            resource: 资源模式（支持 glob）
+            action: 动作类型
+            conditions: ABAC 条件
+            field_pattern: 字段模式（field-level 权限）
+        """
+        self.add_rule(PermissionRule(resource, action, roles, conditions, field_pattern))
 
     def inherit(self, child_role: str, parent_role: str) -> None:
         """声明角色继承：child 继承 parent 的所有权限"""

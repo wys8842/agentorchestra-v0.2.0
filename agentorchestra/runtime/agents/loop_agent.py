@@ -726,7 +726,7 @@ class LoopAgent(Agent):
 
     # ---------------- 子子代理集成 ----------------
 
-    def run_as_subagent(self, task: str, max_steps: Optional = = 5,
+    def run_as_subagent(self, task: str, max_steps: Optional[int] = 5,
                        return_summary: bool = True) -> Dict[str, Any]:
         """作为子子代理运行（TaskTool 集成）
 
