@@ -27,7 +27,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 
 
 class _Components:
@@ -40,6 +40,9 @@ class _Components:
         self._metrics_collector: Optional[Callable[[], Any]] = None
         self._otel_exporter: Optional[Callable[[], Any]] = None
         self._tracer: Optional[Callable[[], Any]] = None
+        # 配置变更回调列表
+        self._config_callbacks: List[Callable[[Any, Any], None]] = []
+        self._current_config: Any = None
 
     # ---------------- 存储 ----------------
 
@@ -127,9 +130,87 @@ class _Components:
             self._metrics_collector = None
             self._otel_exporter = None
             self._tracer = None
+            self._config_callbacks = []
+            self._current_config = None
         # 还原 observability/metrics 默认（NoOp）
         from .observability.metrics import reset_default_collector
         reset_default_collector()
+
+    # ---------------- 配置热更新 ----------------
+
+    def on_config_change(self, callback: Callable[[Any, Any], None]) -> None:
+        """注册配置变更回调。
+
+        Args:
+            callback: 回调函数 fn(old_config, new_config)
+        """
+        with self._lock:
+            if callback not in self._config_callbacks:
+                self._config_callbacks.append(callback)
+
+    def unregister_config_callback(self, callback: Callable[[Any, Any], None]) -> None:
+        """取消注册配置变更回调"""
+        with self._lock:
+            if callback in self._config_callbacks:
+                self._config_callbacks.remove(callback)
+
+    def notify_config_change(self, old: Any, new: Any) -> None:
+        """通知所有已注册的回调（通常由 ConfigWatch 调用）"""
+        with self._lock:
+            self._current_config = new
+            callbacks = list(self._config_callbacks)
+        for cb in callbacks:
+            try:
+                cb(old, new)
+            except (TypeError, ValueError, AttributeError) as e:
+                import logging
+                logging.getLogger("agentorchestra.components").warning(
+                    "config callback failed: %s", e
+                )
+
+    def config(self) -> Any:
+        """获取当前配置（默认回退 Config()）"""
+        with self._lock:
+            if self._current_config is not None:
+                return self._current_config
+        from agentorchestra.runtime.core.config import Config
+        return Config()
+
+    def start_hot_reload(
+        self,
+        file_path: str,
+        config_cls=None,
+        poll_interval: float = 5.0,
+    ) -> Any:
+        """启动配置热更新
+
+        Args:
+            file_path: 配置文件路径
+            config_cls: 配置类（默认 Config）
+            poll_interval: 轮询间隔（秒）
+
+        Returns:
+            ConfigWatch 实例
+        """
+        from agentorchestra.runtime.core.hot_config import ConfigWatch
+
+        if config_cls is None:
+            from agentorchestra.runtime.core.config import Config
+            config_cls = Config
+
+        watcher = ConfigWatch(config_cls, file_path, poll_interval)
+        watcher.on_change(Components.notify_config_change)
+        with self._lock:
+            self._current_config = watcher.config
+        watcher.start()
+        return watcher
+
+    def stop_hot_reload(self) -> None:
+        """停止配置热更新"""
+        from agentorchestra.runtime.core.hot_config import (
+            stop_global_hot_reload,
+        )
+        stop_global_hot_reload()
 
 
 # 全局装配实例

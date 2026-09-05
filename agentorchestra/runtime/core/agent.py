@@ -52,6 +52,9 @@ class Agent(ABC):
         # 工具注册表（可选）
         self.tool_registry = tool_registry
 
+        # 注册配置变更回调
+        self._register_config_callback()
+
         #上下文工程组件
         from agentorchestra.runtime.context.history import HistoryManager
         from agentorchestra.runtime.context.truncator import ObservationTruncator
@@ -435,6 +438,25 @@ class Agent(ABC):
         自动检查是否需要压缩历史
         """
         self.history_manager.append(message)
+
+    def _register_config_callback(self) -> None:
+        """注册配置变更回调（自动响应）"""
+        try:
+            from agentorchestra.components import Components
+
+            def _on_config_change(old, new):
+                self.config = new
+                # 更新并发配置
+                if self.tool_registry and hasattr(self, 'truncator'):
+                    try:
+                        self.truncator.max_lines = new.tool_output.max_lines
+                        self.truncator.max_bytes = new.tool_output.max_bytes
+                    except (AttributeError, TypeError):
+                        pass
+
+            Components.on_config_change(_on_config_change)
+        except ImportError:
+            pass
 
         # 增量更新 Token 计数
         new_tokens = self.token_counter.count_message(message)

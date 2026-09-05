@@ -118,6 +118,32 @@ class RateLimiter:
         self._windows: Dict[str, SlidingWindow] = {}
         self._lock = threading.Lock()
 
+        # 注册配置变更回调
+        self._register_config_callback()
+
+    def _register_config_callback(self) -> None:
+        """注册配置变更回调（限流策略立即生效）"""
+        try:
+            from agentorchestra.components import Components
+
+            limiter = self
+
+            def _on_config_change(old, new):
+                try:
+                    new_limit = new.system.max_concurrent_tools * 10
+                    if new_limit != limiter.default_limit:
+                        limiter.default_limit = new_limit
+                        with limiter._lock:
+                            # 重置所有窗口
+                            for w in limiter._windows.values():
+                                w.limit = new_limit
+                except (AttributeError, TypeError):
+                    pass
+
+            Components.on_config_change(_on_config_change)
+        except ImportError:
+            pass
+
     def try_acquire(self, key: str) -> bool:
         """尝试获取许可（按 key）
 

@@ -92,6 +92,9 @@ class SymphonyLLM:
             model=self.model
         )
 
+        # 注册配置变更回调
+        self._register_config_callback()
+
         # 最后一次调用的统计信息（用于流式调用）
         self.last_call_stats: Optional[LLMResponse] = None
 
@@ -394,3 +397,47 @@ class SymphonyLLM:
             None,
             lambda: self.invoke_with_tools(messages, tools, tool_choice, **kwargs)
         )
+
+
+# ==================== 配置热更新 ====================
+
+    def _register_config_callback(self) -> None:
+        """注册配置变更回调（自动响应 temperature/max_tokens/timeout/retry 等）"""
+        try:
+            from agentorchestra.components import Components
+
+            llm_instance = self
+
+            def _on_config_change(old, new):
+                llm_instance.temperature = new.llm.temperature
+                llm_instance.max_tokens = new.llm.max_tokens
+                llm_instance.timeout = new.llm.timeout
+                try:
+                    llm_instance.retry_manager.max_retries = new.llm.max_retries
+                    llm_instance.retry_manager.base_delay = new.llm.retry_base_delay
+                except (AttributeError, TypeError):
+                    pass
+
+            Components.on_config_change(_on_config_change)
+        except ImportError:
+            pass
+
+
+def _register_config_callback_impl(llm_instance):
+    """配置变更回调（提取以便复用）"""
+    try:
+        from agentorchestra.components import Components
+
+        def _on_config_change(old, new):
+            llm_instance.temperature = new.llm.temperature
+            llm_instance.max_tokens = new.llm.max_tokens
+            try:
+                llm_instance.timeout = new.llm.timeout
+                llm_instance.retry_manager.max_retries = new.llm.max_retries
+                llm_instance.retry_manager.base_delay = new.llm.retry_base_delay
+            except (AttributeError, TypeError):
+                pass
+
+        Components.on_config_change(_on_config_change)
+    except ImportError:
+        pass
