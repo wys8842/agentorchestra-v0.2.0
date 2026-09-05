@@ -156,6 +156,14 @@ class Workflow:
         return []
 
 
+class WorkflowParamExpansionError(Exception):
+    """Workflow 参数展开时检测到非法引用。"""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
 class WorkflowEngine:
     """工作流执行引擎"""
 
@@ -322,7 +330,15 @@ class WorkflowEngine:
 
         # 参数合并：初始参数 + 节点参数（含占位符展开）+ 前置结果
         params = dict(context["params"])
-        params.update(self._expand_params(node.params, context))
+        #：注入 current_node_id 与 current_deps，供 _expand_params 白名单检查
+        context["current_node_id"] = node.node_id
+        context["current_deps"] = list(node.depends_on or [])
+        try:
+            params.update(self._expand_params(node.params, context))
+        finally:
+            # 清理临时字段（避免污染后续节点）
+            context.pop("current_node_id", None)
+            context.pop("current_deps", None)
 
         # 重试机制
         for attempt in range(node.max_retries + 1):
@@ -343,17 +359,39 @@ class WorkflowEngine:
         - "$key"：从初始参数（context["params"]）取值
         - "$node_id.key"：从前置节点结果（context["results"][node_id]）取值
 
-        例：{"order_id": "$step_create.order_id"}
+          未声明依赖的 `$node_id.field` 引用视为安全违规，置 None 并记录告警。
+
+        例：{"order_id": "$step_create.order_id"} （step_create 必须在 deps 中）
         """
+        # 当前节点 id（由调用方注入 context["current_node_id"]）
+        current_node_id = context.get("current_node_id")
+        current_deps: set[str] = set(context.get("current_deps") or [])
         expanded = {}
         for key, value in params.items():
             if isinstance(value, str) and value.startswith("$"):
                 ref = value[1:]
                 if "." in ref:
                     node_id, _, field = ref.partition(".")
+                    #：白名单检查（仅允许访问 declared deps）
+                    if current_node_id is not None and node_id != current_node_id \
+                            and node_id not in current_deps:
+                        #：strict=True 时抛异常而非静默 None
+                        import logging
+                        msg = (
+                            f"参数 '{key}' 引用 '${node_id}.{field}' 未声明依赖"
+                            f"（current deps={current_deps}）"
+                        )
+                        strict = context.get("strict_param_expansion", True)
+                        if strict:
+                            raise WorkflowParamExpansionError(msg)
+                        logging.getLogger("agentorchestra.workflow").warning(msg + "；置 None")
+                        expanded[key] = None
+                        continue
                     node_result = context["results"].get(node_id, {})
                     if isinstance(node_result, dict):
                         expanded[key] = node_result.get(field)
+                    else:
+                        expanded[key] = None
                 else:
                     expanded[key] = context["params"].get(ref)
             else:

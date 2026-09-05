@@ -1,15 +1,17 @@
 # Symphony
 
-**Symphony** 是一个面向生产的**企业级多智能体编排框架**：Agent 负责思考与决策，
+> **当前版本 0.2.0** - 企业级多智能体编排框架
+
+Symphony 是一个面向生产的**企业级多智能体编排框架**：Agent 负责思考与决策，
 Ontology 承载业务语义与对象操作，而编排、事务、持久化、治理与多租户等能力
 由框架以组件化方式提供——既可开箱即用，也能按需插拔替换。
 
-从"Demo 框架"到"可生产多 Agent 平台"，Symphony 内置：
+从"Demo 框架"到"可生产 Multi-Agent 平台"，Symphony 内置：
 
 - **确定性编排**：Workflow / Scheduler / 图(DAG) 三种编排模型，覆盖线性流程、定时调度与条件协作
-- **可恢复事务**：WAL + Checkpoint 崩溃恢复、幂等、逆序补偿、DLQ
+- **可恢复事务**：WAL + Checkpoint 崩溃恢复、幂等，逆序补偿、DLQ
 - **企业治理**：对象身份 + RBAC/行级 ACL + WORM 审计
-- **多租户与配额**：租户隔离、token 配额、用量导出
+- **多租户与配额**：租户隔离、token 配额，用量导出
 - **可插拔组件**：统一装配门面，存储 / 追踪 / 指标均可替换
 
 ## 特性
@@ -20,8 +22,8 @@ Ontology 承载业务语义与对象操作，而编排、事务、持久化、�
 - **治理**：权限 / 审计 / 分支 / 物化
 - **工具生态**：内置工具（文件/计算/子代理/技能/MCP）+ 自定义 Tool
 - **上下文工程**：历史管理、Token 预算、压缩、GSSC 流水线
-- **可观测**：TraceLogger 双格式（JSONL+HTML）审计、事件系统、流式输出
-- **Skills 知识外化**：渐进式披露（元数据 + 按需 body），节省 Token
+- **可观测**：TraceLogger 双格式（JSONL+HTML）审计、事件系统，流式输出
+- **Skills 知识外化**：渐进式披露（元数据 + 按需 body)，节省 Token
 - **跨会话持久记忆**：长期/短期/工作之外的"跨任务记忆"，混合检索（关键词+向量）
 - **企业级运维**：结构化日志、Prometheus 指标、分布式追踪、限流、配置热更新、健康检查、监控端点
 - **企业级就绪**：
@@ -42,9 +44,7 @@ pip install "agentorchestra[all]"     # 全部可选依赖（Anthropic/Gemini/MC
 ## 快速开始
 
 ```python
-from agentorchestra.agents.react_agent import ReActAgent
-from agentorchestra.core.llm import SymphonyLLM
-from agentorchestra.tools.registry import ToolRegistry
+from agentorchestra import ReActAgent, SymphonyLLM, ToolRegistry
 
 # 统一 LLM 客户端：自动按 base_url 识别提供商（OpenAI/Anthropic/Gemini 及兼容接口）
 llm = SymphonyLLM(
@@ -60,6 +60,24 @@ result = agent.run("帮我分析这个项目")
 
 > 也支持从环境变量加载：`LLM_MODEL_ID` / `LLM_API_KEY` / `LLM_BASE_URL`。
 
+## 统一装配入口
+
+Symphony 提供统一的 `Components` 门面来装配和替换横切组件：
+
+```python
+from agentorchestra.components import Components
+
+# 读取（默认回退现有全局实现）
+store = Components.state_store()            # CheckpointStore
+tracer = Components.tracer()                # Tracer
+collector = Components.metrics_collector()  # 指标收集器
+
+# 替换（可插拔）
+Components.register_state_store(my_store)
+Components.enable_prometheus()              # 开启 Prometheus 指标
+Components.enable_otel_trace()            # 开启 OTLP 导出
+```
+
 ## 架构
 
 ```
@@ -72,7 +90,7 @@ result = agent.run("帮我分析这个项目")
 
 ## 目录
 
-源码按**领域**组织在 `agentorchestra/` 下（经典扁平导入名仍可用，见下）：
+源码按**领域**组织在 `agentorchestra/` 下（经典扁平导入名仍可用）：
 
 ```
 agentorchestra/
@@ -104,23 +122,47 @@ agentorchestra/
 > （见 `agentorchestra/_legacy.py`）。同一模块无论走经典名还是新物理名，
 > 得到的是同一个模块对象。
 
+## 公共 API
+
+```python
+# 核心组件
+from agentorchestra import (
+    SymphonyLLM,      # 统一 LLM 客户端
+    Config,           # 配置管理
+    Message,          # 消息类型
+    SymphonyException, # 异常基类
+
+    # Agent 范式
+    SimpleAgent,
+    ReActAgent,
+    ReflectionAgent,
+    PlanSolveAgent,
+
+    # 工具系统
+    ToolRegistry,
+    global_registry,
+    CalculatorTool,
+    calculate,
+)
+```
+
 ## 文档
 
-| 模块                    | 文档                                                         |
-| ----------------------- | ------------------------------------------------------------ |
-| core                    | [docs/core/README.md](docs/core/README.md)                   |
-| agents                  | [docs/agents/README.md](docs/agents/README.md)               |
-| tools                   | [docs/tools/README.md](docs/tools/README.md)                 |
-| context                 | [docs/context/README.md](docs/context/README.md)             |
-| observability           | [docs/observability/README.md](docs/observability/README.md) |
-| memory                  | [docs/memory/README.md](docs/memory/README.md)               |
-| ontology                | [docs/ontology/README.md](docs/ontology/README.md)           |
-| state（持久化）         | [docs/state/README.md](docs/state/README.md)                 |
-| tx（事务运行时）        | [docs/tx/README.md](docs/tx/README.md)                       |
-| orchestration（图通信） | [docs/orchestration/README.md](docs/orchestration/README.md) |
-| governance（权限）      | [docs/governance/README.md](docs/governance/README.md)       |
-| tenancy（多租户）       | [docs/tenancy/README.md](docs/tenancy/README.md)             |
-| 企业级路线图            | [docs/enterprise/README.md](docs/enterprise/README.md) + [specs](docs/superpowers/specs/) |
+| 模块                 | 文档                                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------------- |
+| core               | [docs/core/README.md](docs/core/README.md)                                                |
+| agents             | [docs/agents/README.md](docs/agents/README.md)                                            |
+| tools              | [docs/tools/README.md](docs/tools/README.md)                                              |
+| context            | [docs/context/README.md](docs/context/README.md)                                          |
+| observability      | [docs/observability/README.md](docs/observability/README.md)                              |
+| memory             | [docs/memory/README.md](docs/memory/README.md)                                            |
+| ontology           | [docs/ontology/README.md](docs/ontology/README.md)                                        |
+| state（持久化）         | [docs/state/README.md](docs/state/README.md)                                              |
+| tx（事务运行时）          | [docs/tx/README.md](docs/tx/README.md)                                                    |
+| orchestration（图通信） | [docs/orchestration/README.md](docs/orchestration/README.md)                              |
+| governance（权限）     | [docs/governance/README.md](docs/governance/README.md)                                    |
+| tenancy（多租户）       | [docs/tenancy/README.md](docs/tenancy/README.md)                                          |
+| 企业级路线图             | [docs/enterprise/README.md](docs/enterprise/README.md) + [specs](docs/superpowers/specs/) |
 
 ## 开发
 

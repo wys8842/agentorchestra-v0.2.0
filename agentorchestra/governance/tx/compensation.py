@@ -30,11 +30,16 @@ class CompensationExecutor:
 
     async def compensate(
         self,
-        tx_id: str,
+        ctx: "TxContext",
         completed: List[str],
         completed_params: Dict[str, Dict[str, Any]],
     ) -> Dict[str, Any]:
         """逆序补偿已完成动作。
+
+        Args:
+            ctx: TxContext（传递给补偿函数，使补偿逻辑可访问事务状态/WAL/锁等）。
+            completed: 已完成动作名列表。
+            completed_params: 每个动作的参数（来自执行阶段）。
 
         Returns:
             {"compensated": [...], "failed": [...], "dlq": [...]}
@@ -42,6 +47,8 @@ class CompensationExecutor:
         compensated: List[str] = []
         failed: List[Dict[str, str]] = []
         dlq: List[str] = []
+
+        tx_id = ctx.tx_id
 
         for name in reversed(completed):
             action = self.coordinator.get_action(name)
@@ -54,10 +61,13 @@ class CompensationExecutor:
 
             params = completed_params.get(name, {})
             attempts = 0
+            last_error = ""
             while attempts < self.max_attempts:
                 attempts += 1
                 try:
-                    action.compensate_fn(params, None)  # 同步补偿（ctx 透传 None，动作内部可忽略）
+                    result = action.compensate_fn(params, ctx)  #传递 ctx 而非 None
+                    if asyncio.iscoroutine(result):
+                        await result
                     compensated.append(name)
                     break
                 except Exception as e:

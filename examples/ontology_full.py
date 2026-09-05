@@ -19,11 +19,9 @@
 - 查询引擎（object_set/navigate/join）
 """
 import json
-import sys
 import time
 
-sys.path.insert(0, 'D:/proj/agentorchestra')
-
+# 标准领域路径（不需要 sys.path 注入；安装后自然可导入）
 from agentorchestra.ontology import (
     ActionType,
     GraphStore,
@@ -37,7 +35,7 @@ from agentorchestra.ontology import (
     StepNode,
     Workflow,
 )
-from agentorchestra.tools.base import ToolParameter
+from agentorchestra.capability.tools.base import ToolParameter
 
 
 def section(t):

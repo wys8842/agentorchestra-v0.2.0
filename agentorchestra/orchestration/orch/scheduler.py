@@ -5,11 +5,15 @@
 - DAG 驱动 + 有界回环（节点 iteration 计数，达 max_iterations 转告警不再派发）
 - 条件边：NodeOutput.route 与边 when 匹配才激活；无条件边总是激活
 - 节点异常：on_node_error 回调 + status=partially_failed
+
+：iteration 计数通过 store.load_iteration_snapshot / save_iteration_snapshot 专用 API 持久化
+（O(1) 查询/写入），取代 v0.1.1 的全表 WAL 扫描。
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
@@ -58,8 +62,14 @@ class GraphScheduler:
         result = GraphResult(status="completed", graph_id=graph_id,
                              thread_id=thread_id)
 
-        # 有界回环计数
-        iteration: Dict[str, int] = {}
+        #：iteration 持久化到 store（崩溃恢复后仍能正确限制循环）
+        iteration: Dict[str, int] = await self._load_iteration(
+            graph_id, thread_id
+        )
+
+        #：fan-in barrier 机制
+        # - fanin_pending: target -> {from_node_id} 已到达的来源集合
+        fanin_pending: Dict[str, set] = {}  # target -> {from_node_id}
 
         def emit(ev: NodeEvent) -> None:
             """记录事件并触发 on_node_error 回调（兼容协程）。"""
@@ -70,8 +80,11 @@ class GraphScheduler:
                     if asyncio.iscoroutine(out):
                         loop = asyncio.get_event_loop()
                         loop.create_task(out)
-                except Exception:
-                    pass
+                except (TypeError, ValueError, RuntimeError) as e:
+                    #
+                    logging.getLogger("agentorchestra.scheduler").warning(
+                        "on_node_error callback raised: %s", e
+                    )
 
         # 入口节点：显式 entry_node → 单入口；否则启动所有无入边根节点（支持多入口并行）
         entries = self._find_entries(graph) if entry_node is None else [entry_node]
@@ -97,17 +110,25 @@ class GraphScheduler:
                     graph=graph, msg=msg, inbox=inbox, iteration=iteration,
                     result=result, emit=emit, thread_id=thread_id,
                     graph_id=graph_id, on_delivery_failed=on_delivery_failed,
+                    fanin_pending=fanin_pending,
                 )
                 processed_msg_ids.add(msg.msg_id)
 
         result.iteration_count = max(iteration.values()) if iteration else 0
+        #：持久化最终 iteration
+        await self._save_iteration(graph_id, thread_id, iteration)
         return result
 
     async def _process_one(self, graph: Any, msg: Any, inbox: Inbox,
                            iteration: Dict[str, int], result: Any, emit: Any,
                            thread_id: str, graph_id: str,
-                           on_delivery_failed: Optional[Callable[[Any], Any]]) -> None:
-        """处理单条消息：执行节点 + 路由下游。"""
+                           on_delivery_failed: Optional[Callable[[Any], Any]],
+                           fanin_pending: Optional[Dict[str, set]] = None) -> None:
+        """处理单条消息：执行节点 + 路由下游。
+
+        Args:
+            fanin_pending: 可选的 fan-in 计数器，用于 barrier 机制
+        """
         node_name = msg.to_node
         node = graph.get_node(node_name)
         if node is None:
@@ -164,17 +185,23 @@ class GraphScheduler:
         emit(NodeEvent(NodeEventType.NODE_FINISH, node_name, graph_id,
                        thread_id, msg.msg_id, data={"result": output.result}))
 
-        # 路由下游
+        # 路由下游（传递 fanin_pending 用于 barrier 机制）
         await self._route_downstream(graph, node_name, output, thread_id,
-                                     graph_id, inbox, iteration, result)
+                                     graph_id, inbox, iteration, result,
+                                     fanin_pending=fanin_pending)
         await inbox.ack(msg.msg_id, ack_token, "acked")
 
     async def _route_downstream(
         self, graph: Any, node_name: str, output: NodeOutput,
         thread_id: str, graph_id: str, inbox: Inbox,
         iteration: Dict[str, int], result: Any,
+        fanin_pending: Optional[Dict[str, set]] = None,
     ) -> None:
-        """按条件边把输出路由到下游。"""
+        """按条件边把输出路由到下游。
+
+        Args:
+            fanin_pending: 可选的 fan-in 计数器，用于 barrier 机制
+        """
         route = output.route
         for edge in graph.outgoing(node_name):
             # 条件边匹配
@@ -191,12 +218,29 @@ class GraphScheduler:
                 })
                 continue
 
+            # Fan-in barrier：检查是否需要等待其他上游
+            if fanin_pending is not None:
+                if edge.target not in fanin_pending:
+                    fanin_pending[edge.target] = set()
+                fanin_pending[edge.target].add(node_name)
+
+                # 检查是否所有上游都已到达
+                expected = self._get_fanin_expected(graph, edge.target)
+                if len(fanin_pending[edge.target]) < expected:
+                    # 还有上游未到达，暂不发送消息
+                    continue
+
             content = {
                 "task": output.result,
                 **(output.data or {}),
             }
             await inbox.send(graph_id, thread_id, edge.target, content,
                              from_node=node_name, condition=edge.when)
+
+    def _get_fanin_expected(self, graph: Any, target_node: str) -> int:
+        """获取目标节点的预期上游数量（用于 fan-in barrier）"""
+        in_edges = list(graph.incoming(target_node))
+        return len(in_edges)
 
     def _find_entries(self, graph: Any) -> list:
         """找所有无入边的节点（入口）。"""
@@ -208,6 +252,36 @@ class GraphScheduler:
         if not entries:
             raise ValueError("图中无入口节点（所有节点都有入边）")
         return entries
+
+
+
+    async def _load_iteration(
+        self, graph_id: str, thread_id: str
+    ) -> Dict[str, int]:
+        """（H-7）：使用 store 专用 API（O(1) 查询）。"""
+        if self.store is None or not hasattr(self.store, "load_iteration_snapshot"):
+            return {}
+        try:
+            return await self.store.load_iteration_snapshot(graph_id, thread_id)
+        except (KeyError, AttributeError) as e:
+            logging.getLogger("agentorchestra.scheduler").debug(
+                "iteration snapshot lookup failed: %s", e
+            )
+            return {}
+
+    async def _save_iteration(
+        self, graph_id: str, thread_id: str, iteration: Dict[str, int]
+    ) -> None:
+        """（H-7）：使用 store 专用 API（O(1) 写入）。"""
+        if self.store is None or not hasattr(self.store, "save_iteration_snapshot"):
+            return
+        try:
+            await self.store.save_iteration_snapshot(graph_id, thread_id, iteration)
+        except (AttributeError, KeyError, TypeError) as e:
+            #
+            logging.getLogger("agentorchestra.scheduler").warning(
+                "iteration snapshot save failed: %s", e
+            )
 
 
 __all__ = ["GraphScheduler"]

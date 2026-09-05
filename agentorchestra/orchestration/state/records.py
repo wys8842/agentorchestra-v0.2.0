@@ -16,8 +16,9 @@ class LockRecord:
     """乐观锁记录（locks 表）。
 
     Attributes:
-        resource_key: 被锁资源键（如 "order:12345"）
-        version: 当前版本号（CAS 基准）
+        resource_key: 被锁资源键（如 "order:12345"，已含租户 namespace 前缀）
+        version: 当前版本号（per-resource 单调递增，CAS 基准）
+        fencing_token: 单调递增令牌（：防止僵尸事务绕过 TTL 后误写）
         owner_tx: 持有锁的事务 id
         held_since: 获取时间
         expires_at: 过期时间（TTL 释放）
@@ -26,6 +27,7 @@ class LockRecord:
     resource_key: str
     version: int
     owner_tx: str
+    fencing_token: int = 0  #单调递增令牌（每次 acquire + 1）
     held_since: datetime = field(default_factory=datetime.now)
     expires_at: Optional[datetime] = None
 
@@ -58,6 +60,7 @@ class DLQEntry:
     """死信条目（dead_letter 表）。
 
     Attributes:
+        id: 全局唯一 id（：用于 resolve_dlq(id) 定位条目；内存后端自增，SQL 后端 DB autoincrement）
         tx_id: 关联事务 id
         action_name: 补偿失败的动作名
         error: 最后一次错误信息
@@ -74,6 +77,7 @@ class DLQEntry:
     status: str = "open"
     created_at: datetime = field(default_factory=datetime.now)
     resolved_at: Optional[datetime] = None
+    id: Optional[int] = None  #DLQEntry 增加 id 字段供 resolve_dlq 定位
 
 
 @dataclass

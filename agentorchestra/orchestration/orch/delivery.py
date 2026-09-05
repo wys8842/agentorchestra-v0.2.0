@@ -18,7 +18,18 @@ logger = logging.getLogger("agentorchestra.orchestration.delivery")
 
 
 class DeliveryManager:
-    """投递管理：把 Inbox 消息派发给消费者，重试带指数退避。"""
+    """投递管理：把 Inbox 消息派发给消费者，重试带指数退避。
+
+    .. deprecated::
+        v0.1.1（C-N8）：GraphScheduler 已内置消息投递（mark_delivered → 节点执行 →
+        ack → 路由下游），本类不再被 scheduler 调用。
+
+        作为可复用组件保留（供自定义 consumer 场景使用），但不再作为
+        GraphScheduler 的投递路径。v0.2 若仍无调用方则整体移除。
+
+        对"节点执行失败重试"的需求，建议在自定义 Node.run 内部自处理重试，
+        或使用 CheckpointStore + DLQ 做持久化重试。
+    """
 
     def __init__(
         self,
@@ -106,4 +117,4 @@ class DeliveryManager:
         return False
 
 
-__all__ = ["DeliveryManager"]
+__all__: list = []  #

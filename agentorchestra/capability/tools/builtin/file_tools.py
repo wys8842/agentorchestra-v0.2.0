@@ -40,11 +40,30 @@ class FileToolMixin:
     working_dir: Path  # Defined by subclasses
 
     def _resolve_path(self, path: str) -> Path:
-        """解析相对路径（兼容 Windows 和 Linux）"""
+        """解析相对路径（兼容 Windows 和 Linux）
+
+
+        - 不允许绝对路径逃出 working_dir（除非以 working_dir 为根）
+        - 不允许 `..` 逃出 working_dir
+        - 解析后必须 `is_relative_to(working_dir)`
+        """
+        if not path:
+            raise ValueError("路径不能为空")
         path = path.replace('\\', '/')
+        # 拼接 working_dir
         if os.path.isabs(path):
-            return Path(path)
-        return self.working_dir / path
+            # 绝对路径：要求必须在 working_dir 下
+            candidate = Path(path).resolve()
+        else:
+            candidate = (self.working_dir / path).resolve()
+        # 解析后校验必须位于 working_dir 下
+        try:
+            candidate.relative_to(self.working_dir.resolve())
+        except ValueError as e:
+            raise PermissionError(
+                f"路径穿越被拦截：'{path}' 解析后 '{candidate}' 超出工作目录 '{self.working_dir}'"
+            ) from e
+        return candidate
 
     def _backup_file(self, full_path: Path) -> Path:
         """备份文件"""

@@ -112,24 +112,24 @@ class ReActAgent(Agent):
 
         except KeyboardInterrupt:
             # Ctrl+C 时自动保存
-            print("\n 用户中断，自动保存会话...")
+            self.logger.info("用户中断，自动保存会话...")
             if self.session_store:
                 try:
                     filepath = self.save_session("session-interrupted")
-                    print(f"✅ 会话已保存: {filepath}")
+                    self.logger.info("会话已保存: %s", filepath)
                 except Exception as e:
-                    print(f"❌ 保存失败: {e}")
+                    self.logger.warning("保存失败: %s", e)
             raise
 
         except Exception as e:
             # 错误时也尝试保存
-            print(f"\n❌ 发生错误: {e}")
+            self.logger.warning("发生错误: %s", e)
             if self.session_store:
                 try:
                     filepath = self.save_session("session-error")
-                    print(f"✅ 会话已保存: {filepath}")
+                    self.logger.info("会话已保存: %s", filepath)
                 except Exception as save_error:
-                    print(f"❌ 保存失败: {save_error}")
+                    self.logger.warning("保存失败: %s", save_error)
             raise
 
     def _run_impl(self, input_text: str, session_start_time, **kwargs) -> str:
@@ -150,7 +150,7 @@ class ReActAgent(Agent):
         # 构建工具 schemas（包含内置工具和用户工具）
         tool_schemas = self._build_tool_schemas()
 
-        current_step = 0
+        current_step: int = 0
         total_tokens = 0
 
         # 记录用户消息
@@ -491,7 +491,7 @@ class ReActAgent(Agent):
             messages = self._build_messages(input_text)
             tool_schemas = self._build_tool_schemas()
 
-            current_step = 0
+            current_step: int = 0
             total_tokens = 0
 
             # 记录用户消息
@@ -824,7 +824,7 @@ class ReActAgent(Agent):
             messages = self._build_messages(input_text)
             tool_schemas = self._build_tool_schemas()
 
-            current_step = 0
+            current_step: int = 0
             final_answer = None
 
             print(f"\n🤖 {self.name} 开始处理问题: {input_text}")
@@ -845,63 +845,53 @@ class ReActAgent(Agent):
 
                 print(f"\n--- 第 {current_step} 步 ---")
 
-                # LLM 流式调用
-                full_response = ""
-
+                # 单次 LLM 调用：异步 + 工具支持（避免重复调用）
                 try:
-                    # 使用 LLM 的异步流式方法
-                    async for chunk in self.llm.astream_invoke(messages, **kwargs):
-                        full_response += chunk
+                    response = await self.llm.ainvoke_with_tools(
+                        messages=messages,
+                        tools=tool_schemas,
+                        tool_choice="auto",
+                        **kwargs,
+                    )
+                    response_message = response.choices[0].message
+                    full_response = response_message.content or ""
 
-                        # 发送 LLM 输出块
+                    # 将内容作为单个流式块发送（避免双 LLM 调用）
+                    if full_response:
                         yield StreamEvent.create(
                             StreamEventType.LLM_CHUNK,
                             self.name,
-                            chunk=chunk,
-                            step=current_step
+                            chunk=full_response,
+                            step=current_step,
                         )
-
-                        print(chunk, end="", flush=True)
-
-                    print()  # 换行
 
                 except Exception as e:
                     error_msg = f"LLM 调用失败: {str(e)}"
-                    print(f"❌ {error_msg}")
+                    self.logger.warning(error_msg)
 
                     yield StreamEvent.create(
                         StreamEventType.ERROR,
                         self.name,
                         error=error_msg,
-                        step=current_step
+                        step=current_step,
                     )
 
                     await self._emit_event(EventType.AGENT_ERROR, on_error, error=error_msg)
                     break
 
-                # 解析工具调用（需要完整响应）
-                # 注意：流式输出后需要重新调用 LLM 获取 tool_calls
-                # 这里简化处理：使用非流式调用获取工具调用
+                # 解析工具调用
                 try:
-                    response = self.llm.invoke_with_tools(
-                        messages=messages,
-                        tools=tool_schemas,
-                        tool_choice="auto",
-                        **kwargs
-                    )
-
-                    response_message = response.choices[0].message
-                    tool_calls = response_message.tool_calls
+                    tool_calls = response_message.tool_calls or []
 
                     if not tool_calls:
                         # 没有工具调用，直接返回
-                        final_answer = response_message.content or full_response or "抱歉，我无法回答这个问题。"
+                        final_answer = full_response or "抱歉，我无法回答这个问题。"
 
                         yield StreamEvent.create(
                             StreamEventType.AGENT_FINISH,
                             self.name,
                             result=final_answer,
-                            total_steps=current_step
+                            total_steps=current_step,
                         )
 
                         await self._emit_event(EventType.AGENT_FINISH, on_finish, result=final_answer)

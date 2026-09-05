@@ -1,10 +1,12 @@
 """工具注册表 - Symphony原生工具系统"""
 
 import asyncio
+import contextlib
+import contextvars
 import json
 import logging
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Iterator, Optional
 
 from agentorchestra.runtime.core.utils import measure_elapsed_ms
 
@@ -14,6 +16,44 @@ from .errors import ToolErrorCode
 from .response import ToolResponse
 
 logger = logging.getLogger("agentorchestra.tools.registry")
+
+
+# ---------------- 子代理安全：contextvars RAII ----------------
+
+# 每个 asyncio 任务独立持有 disabled_tools 集合
+_disabled_tools_var: contextvars.ContextVar[set[str]] = contextvars.ContextVar(
+    "_disabled_tools", default=set()
+)
+_disabled_functions_var: contextvars.ContextVar[set[str]] = contextvars.ContextVar(
+    "_disabled_functions", default=set()
+)
+
+
+@contextlib.contextmanager
+def temporary_tool_filter(disabled_tool_names: set[str]) -> Iterator[None]:
+    """在 with 块内临时禁用指定工具；块退出自动恢复（finally 强保证）。
+
+
+    contextvars + RAII 强保证 finally 块执行。
+
+    用法：
+        with temporary_tool_filter({"dangerous_tool", "write_file"}):
+            result = sub_agent.run(task)
+        # 块退出后工具自动恢复
+    """
+    prev_tools = _disabled_tools_var.get()
+    prev_funcs = _disabled_functions_var.get()
+    tok_tools = _disabled_tools_var.set(
+        (prev_tools or set()) | set(disabled_tool_names)
+    )
+    tok_funcs = _disabled_functions_var.set(
+        (prev_funcs or set()) | set(disabled_tool_names)
+    )
+    try:
+        yield
+    finally:
+        _disabled_tools_var.reset(tok_tools)
+        _disabled_functions_var.reset(tok_funcs)
 
 
 def _is_error_response(response: ToolResponse) -> bool:
@@ -226,16 +266,14 @@ class ToolRegistry:
             return None
 
     def execute_tool(self, name: str, input_text: str) -> ToolResponse:
-        """
-        执行工具，返回 ToolResponse 对象（带熔断器保护）
-
-        Args:
-            name: 工具名称
-            input_text: 输入参数（JSON 字符串或字典）
-
-        Returns:
-            ToolResponse: 标准化的工具响应对象
-        """
+        """执行工具（受 contextvars 临时过滤保护）"""
+        #：临时禁用的工具直接返回 NOT_FOUND，不进入熔断 / 执行路径
+        if name in _disabled_tools_var.get() or name in _disabled_functions_var.get():
+            return ToolResponse.error(
+                code=ToolErrorCode.NOT_FOUND,
+                message=f"工具 '{name}' 当前被临时禁用（子代理隔离）",
+                context={"tool_name": name},
+            )
         trace_span = self._start_trace(name)
 
         # 检查熔断器
@@ -378,8 +416,10 @@ class ToolRegistry:
         return "\n".join(descriptions) if descriptions else "暂无可用工具"
 
     def list_tools(self) -> list[str]:
-        """列出所有工具名称"""
-        return list(self._tools.keys()) + list(self._functions.keys())
+        """列出所有工具名称（排除当前 context 临时禁用的）"""
+        disabled = _disabled_tools_var.get() | _disabled_functions_var.get()
+        all_names = list(self._tools.keys()) + list(self._functions.keys())
+        return [n for n in all_names if n not in disabled]
 
     def get_all_tools(self) -> list[Tool]:
         """获取所有Tool对象"""

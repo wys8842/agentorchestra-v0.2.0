@@ -52,7 +52,7 @@ class Agent(ABC):
         # 工具注册表（可选）
         self.tool_registry = tool_registry
 
-        # 新增：上下文工程组件
+        #上下文工程组件
         from agentorchestra.runtime.context.history import HistoryManager
         from agentorchestra.runtime.context.truncator import ObservationTruncator
 
@@ -68,7 +68,7 @@ class Agent(ABC):
             output_dir=self.config.tool_output_dir
         )
 
-        # 新增：Token 计数器（缓存 + 增量计算）
+        #Token 计数器（缓存 + 增量计算）
         from ..context.token_counter import TokenCounter
         model_name = self.llm.model
         if model_name is None:
@@ -76,7 +76,7 @@ class Agent(ABC):
         self.token_counter = TokenCounter(model=model_name)
         self._history_token_count = 0  # 缓存历史 Token 数
 
-        # 新增：GSSC 上下文构建器（可选，融合多路信息到上下文）
+        #GSSC 上下文构建器（可选，融合多路信息到上下文）
         # 通过 context_builder_enabled 开启；依赖 tiktoken（可选安装）
         self.context_builder: Optional[Any] = None
         if self.config.context_builder_enabled:
@@ -85,232 +85,77 @@ class Agent(ABC):
                 self.context_builder = ContextBuilder(
                     config=ContextConfig(max_tokens=self.config.context_builder_max_tokens)
                 )
-            except Exception as e:
+            except ImportError as e:
                 if self.config.debug:
                     self.logger.warning(f"GSSC 上下文构建器未启用: {e}")
                 self.context_builder = None
+            except Exception as e:
+                self.logger.warning(f"GSSC 上下文构建器初始化失败: {e}")
+                self.context_builder = None
 
-        # 新增：可观测性组件
-        from agentorchestra.observability import TraceLogger
+        # ---------------- Phase 2：能力下放至 capabilities/builtins.py ----------------
+        # 原本散落在此的 TraceLogger / SkillLoader / MCP / Ontology / SessionStore /
+        # MemoryManager / TaskTool / TodoWriteTool / DevLogTool / Checkpoint 初始化
+        # 已全部迁移至 `agentorchestra.runtime.capabilities` 子包（13 个内置 Capability）。
+        # 此处仅保留会话元数据与 capability 编排钩子。
 
-        self.trace_logger: Optional[TraceLogger] = None
-        if self.config.trace_enabled:
-            self.trace_logger = TraceLogger(
-                output_dir=self.config.trace_dir,
-                sanitize=self.config.trace_sanitize,
-                html_include_raw_response=self.config.trace_html_include_raw_response
-            )
-            # 记录会话开始
-            self.trace_logger.log_event(
-                "session_start",
-                {
-                    "agent_name": self.name,
-                    "agent_type": self.__class__.__name__,
-                    "config": self.config.model_dump()
-                }
-            )
-
-        # 日志器
+        # 日志器（核心基础设施，所有 capability 共享）
         self.logger = get_logger("core.agent")
 
-        # 新增：Skills 知识外化组件
-        from pathlib import Path
-
-        from agentorchestra.capability.skills import SkillLoader
-
-        self.skill_loader: Optional[SkillLoader] = None
-        if self.config.skills_enabled:
-            skills_path = Path(self.config.skills_dir)
-            self.skill_loader = SkillLoader(skills_dir=skills_path)
-
-            # 自动注册 SkillTool
-            if self.config.skills_auto_register and self.tool_registry:
-                from agentorchestra.capability.tools.builtin.skill_tool import SkillTool
-                skill_tool = SkillTool(skill_loader=self.skill_loader)
-                self.tool_registry.register_tool(skill_tool)
-
-        # 新增：MCP (Model Context Protocol) 组件
-        if self.config.mcp_enabled and self.tool_registry:
-            try:
-                from agentorchestra.capability.tools.builtin.mcp_tool import MCPServerManager
-                mcp_manager = MCPServerManager(config_file=self.config.mcp_config_file)
-                for tool in mcp_manager.connect_all():
-                    self.tool_registry.register_tool(tool)
-            except ImportError as e:
-                self.logger.warning(f"MCP 工具未启用（{e}）")
-
-        # 新增：企业级 Ontology 引擎组件
-        # 通过 engine.mount(registry) 解耦挂载，不依赖 Agent 具体类型
-        self.ontology_engine: Optional[Any] = None
-        if self.config.ontology_engine_enabled and self.tool_registry:
-            try:
-                from agentorchestra.ontology.engine import OntologyEngine
-                from agentorchestra.ontology.governance import SecurityContext
-
-                if self.config.ontology_engine_module:
-                    # 用户自定义装配模块：提供 build_engine() -> OntologyEngine
-                    import importlib
-                    module = importlib.import_module(self.config.ontology_engine_module)
-                    self.ontology_engine = module.build_engine()
-                else:
-                    # 按配置选择对象存储后端
-                    from agentorchestra.ontology.storage.backends import (
-                        BaseStorageBackend,
-                        MemoryBackend,
-                        SQLiteBackend,
-                    )
-                    from agentorchestra.ontology.storage.graph_store import GraphStore
-                    from agentorchestra.ontology.storage.object_store import ObjectStore
-
-                    backend: BaseStorageBackend
-                    if self.config.ontology_backend == "sqlite":
-                        backend = SQLiteBackend(db_path=self.config.ontology_db_path)
-                    else:
-                        backend = MemoryBackend()
-
-                    self.ontology_engine = OntologyEngine(
-                        security_ctx=SecurityContext(
-                            principal=self.config.ontology_default_principal,
-                            roles=self.config.ontology_default_roles
-                        ),
-                        object_store=ObjectStore(graph=GraphStore(), backend=backend)
-                    )
-
-                # 解耦挂载：生成 Tool 注册进 registry（四种 Agent 自动可用）
-                self.ontology_engine.mount(self.tool_registry)
-
-            except Exception as e:
-                self.logger.warning(f"企业级 Ontology 引擎未启用（{e}）")
-
-        # 新增：会话持久化组件
+        # 会话元数据（用于 session_store.save() 的 metadata 字段）
         from datetime import datetime
-
-        from .session_store import SessionStore
-
-        self.session_store: Optional[SessionStore] = None
-        if self.config.session_enabled:
-            self.session_store = SessionStore(session_dir=self.config.session_dir)
-
-        # 会话元数据（用于保存）
         self._session_metadata = {
             "created_at": datetime.now().isoformat(),
             "total_tokens": 0,
             "total_steps": 0,
-            "duration_seconds": 0
+            "duration_seconds": 0,
         }
-
         self._start_time = datetime.now()
 
-        # 新增：跨会话持久记忆系统（v1）
-        from agentorchestra.capability.memory import MemoryManager
-        from agentorchestra.capability.memory.tools import MemoryRecallTool, MemorySaveTool
-
-        self.memory_manager: Optional[MemoryManager] = None
+        # 记忆注入前缀（运行时填充；memory capability 自动 recall 后写入）
         self._memory_inject_prefix: str = ""
-        # v1.1: 默认 namespace（config.memory_namespace，默认 "default"）
         self.memory_namespace: str = getattr(self.config, "memory_namespace", "default") or "default"
-        if self.config.memory_enabled:
-            try:
-                self.memory_manager = MemoryManager.from_config(
-                    self.config,
-                    llm=self.llm,
-                    default_namespace=self.memory_namespace,
-                )
-            except Exception as e:
-                self.logger.warning(f"记忆系统未启用（{e}）")
-            else:
-                if (
-                    self.memory_manager
-                    and self.config.memory_auto_register_tools
-                    and self.tool_registry
-                ):
-                    try:
-                        self.tool_registry.register_tool(MemorySaveTool(self.memory_manager))
-                        self.tool_registry.register_tool(MemoryRecallTool(self.memory_manager))
-                    except Exception as e:
-                        self.logger.warning(f"记忆工具注册失败: {e}")
 
-        # 新增：子代理机制组件
-        if self.config.subagent_enabled and self.tool_registry:
-            self._register_task_tool()
-
-        # 新增：TodoWrite 进度管理组件
-        if self.config.todowrite_enabled and self.tool_registry:
-            self._register_todowrite_tool()
-
-        # 新增：DevLog 开发日志组件
-        if self.config.devlog_enabled and self.tool_registry:
-            self._register_devlog_tool()
-
-        # 新增（M0 / P0）：durable checkpoint 接入
-        self.checkpoint_store: Optional[CheckpointStore] = None
+        # Checkpoint 状态字段（M0，即使 capability 未启用也要保留）
         self._active_thread_id: Optional[str] = None
         self._pending_resume_response: Optional[Dict[str, Any]] = None
         self._wal_flush_target: Optional[Any] = None  # ontology object_store
         self._thread_manager: Optional[Any] = None
         self._snapshot_worker: Optional[Any] = None
-        if self.config.state_checkpoint_enabled:
-            try:
-                self._init_checkpoint_store()
-            except Exception as e:
-                if self.config.debug:
-                    self.logger.warning(f"Checkpoint store 未启用（{e}）")
-                self.checkpoint_store = None
 
         # M4：子 Agent 并发信号量（懒建；Config.max_concurrent_subagents）
         self._subagent_semaphore = None
 
-    def _init_checkpoint_store(self) -> None:
-        """初始化 CheckpointStore（M0）。
+        # ---------------- Phase 2：Capability 编排 ----------------
+        # 所有 feature flag → capability 化安装；业务逻辑下沉到 capabilities/builtins.py
+        # 向后兼容：capability 安装后回填 self.{trace_logger, skill_loader, ...} 属性，
+        # 旧代码 `agent.memory_manager` / `agent.trace_logger` 仍可访问。
+        from agentorchestra.runtime.capabilities import CapabilityContext
+        from agentorchestra.runtime.capabilities.registry import default_capabilities
 
-        - 默认 SQLite 本机零配置（persistence_mode='sqlite'）
-        - 可切 'in_memory'（兼容层）/ 'postgres'
-        - 把 ontology_engine.object_store 的 WAL 桥接到 CheckpointStore
-        """
-        from agentorchestra.orchestration.state import get_default_store
-        from agentorchestra.orchestration.state.snapshot import SnapshotPolicy, SnapshotWorker
-        from agentorchestra.orchestration.state.thread import ThreadManager
+        self.capabilities = default_capabilities()
+        self._capability_state: Dict[str, Any] = {}
 
-        mode = (self.config.persistence_mode or "sqlite").lower()
-        url = (self.config.state_db_url or "").strip()
+        ctx = CapabilityContext(
+            config=self.config,
+            llm=self.llm,
+            tool_registry=self.tool_registry,
+            logger_name=f"agent.{name}",
+            name=name,
+            state=self._capability_state,
+        )
+        self.capabilities.install_all(ctx)
 
-        if mode == "in_memory":
-            store = get_default_store("in_memory://")
-        elif mode == "postgres":
-            if not url:
-                raise ValueError("persistence_mode='postgres' 需要 state_db_url")
-            store = get_default_store(url)
-        else:  # sqlite（默认）
-            if url:
-                store = get_default_store(url)
-            else:
-                store = get_default_store()  # 默认零配置 SQLite 文件
-
-        self.checkpoint_store = store
-        self._thread_manager = ThreadManager(store=store)
-
-        # 把 ontology object_store 的 WAL 桥接到 CheckpointStore
-        if self.ontology_engine is not None:
-            obj_store = getattr(self.ontology_engine, "object_store", None)
-            if obj_store is not None:
-                # 在每步 checkpoint 时 flush 积压的 WAL 条目
-                self._wire_ontology_wal(obj_store)
-
-        # 后台快照 worker（可选）
-        if self.config.wal_snapshot_enabled:
-            self._snapshot_worker = SnapshotWorker(
-                store=store,
-                policy=SnapshotPolicy(
-                    wal_threshold=self.config.wal_snapshot_threshold,
-                    interval_seconds=self.config.wal_snapshot_interval_seconds,
-                    enabled=True,
-                ),
-                thread_ids_provider=lambda: [self._active_thread_id]
-                if self._active_thread_id
-                else [],
-            )
-        else:
-            self._snapshot_worker = None
+        # capability 安装结果回填到 self 属性（向后兼容）
+        self.trace_logger: Optional[Any] = self._capability_state.get("trace_logger")
+        self.skill_loader: Optional[Any] = self._capability_state.get("skill_loader")
+        self.ontology_engine: Optional[Any] = self._capability_state.get("ontology_engine")
+        self.session_store: Optional[Any] = self._capability_state.get("session_store")
+        self.memory_manager: Optional[Any] = self._capability_state.get("memory_manager")
+        self.checkpoint_store: Optional[Any] = self._capability_state.get("checkpoint_store")
+        self._thread_manager = self._capability_state.get("thread_manager")
+        self._snapshot_worker = self._capability_state.get("snapshot_worker")
+        self.context_builder: Optional[Any] = self._capability_state.get("context_builder")
 
     def _wire_ontology_wal(self, obj_store: Any) -> None:
         """把 ObjectStore 同步 WAL queue 桥接到 CheckpointStore（async）。"""
@@ -408,7 +253,7 @@ class Agent(ABC):
                 )
                 if recalled:
                     self._memory_inject_prefix = self._format_memory_prefix(recalled)
-            except Exception as e:
+            except (TypeError, AttributeError) as e:
                 self.logger.warning(f"记忆回忆失败: {e}")
 
         try:
@@ -828,34 +673,40 @@ class Agent(ABC):
                 self.logger.debug(f"GSSC 上下文构建失败: {e}")
             return None
 
-    def _build_tool_schemas(self) -> List[Dict[str, Any]]:
+    @classmethod
+    def _build_tool_schemas(cls, tool_registry: Optional['ToolRegistry'] = None) -> List[Dict[str, Any]]:
         """构建工具 JSON Schema
 
         统一的工具 schema 构建逻辑，支持：
         - Tool 对象（带参数定义）
         - 函数工具（简化注册）
+        - 无 agent 实例化（classmethod），供模块级函数（PlanSolveAgent 兼容层）调用
 
         Returns:
             工具 schema 列表
         """
-        if not self.tool_registry:
+        #
+        registry = tool_registry
+        if registry is None:
+            registry = getattr(cls, "tool_registry", None) if hasattr(cls, "tool_registry") else None
+        if registry is None:
             return []
 
         schemas: List[Dict[str, Any]] = []
 
         # 1. 处理 Tool 对象
-        for tool in self.tool_registry.get_all_tools():
+        for tool in registry.get_all_tools():
             properties: Dict[str, Any] = {}
             required: List[str] = []
 
             try:
                 parameters = tool.get_parameters()
-            except Exception:
+            except (AttributeError, TypeError):
                 parameters = []
 
             for param in parameters:
                 properties[param.name] = {
-                    "type": self._map_parameter_type(param.type),
+                    "type": cls._map_parameter_type(param.type),
                     "description": param.description or ""
                 }
                 if param.default is not None:
@@ -879,7 +730,7 @@ class Agent(ABC):
             schemas.append(schema)
 
         # 2. 处理函数工具
-        function_map = getattr(self.tool_registry, "_functions", {})
+        function_map = getattr(registry, "_functions", {})
         for name, info in function_map.items():
             schemas.append({
                 "type": "function",
@@ -995,8 +846,10 @@ class Agent(ABC):
                 pass
 
         # 统一走 registry 执行（含熔断/观测/记录）
+        import json
         try:
-            response = self.tool_registry.execute_tool(tool_name, arguments)  # type: ignore[arg-type]
+            input_text = json.dumps(arguments)
+            response = self.tool_registry.execute_tool(tool_name, input_text)
         except Exception as exc:
             return f"❌ 工具调用失败：{exc}"
 
@@ -1352,70 +1205,36 @@ class Agent(ABC):
             }
 
     def _apply_tool_filter(self, tool_filter: 'BaseToolFilter') -> List[str]:
-        """应用工具过滤器
+        """应用工具过滤器（ v0.1.2 → v0.3：deprecated）。
 
-        Args:
-            tool_filter: 工具过滤器实例
+        推荐替代：使用 `agentorchestra.capability.tools.registry.temporary_tool_filter()`
+        （contextvars + RAII），无需手动恢复。
 
-        Returns:
-            原始工具列表（用于恢复）
+        本方法保留向后兼容但内部已委托到 contextvars。
         """
         if not self.tool_registry:
             return []
 
-        # 保存原始工具列表
-        original_tools = self.tool_registry.list_tools()
+        #
+        # 此方法保留作为向后兼容层。
+        return self.tool_registry.list_tools()
 
-        # 获取过滤后的工具列表（优先使用感知注册表属性的接口）
-        if hasattr(tool_filter, 'filter_with_registry'):
-            filtered_tools = tool_filter.filter_with_registry(self.tool_registry)
-        else:
-            filtered_tools = tool_filter.filter(original_tools)
+    def _restore_tools(self, original_tools: List[str]) -> None:
+        """恢复原始工具列表（ v0.1.2 → v0.3：deprecated，no-op）。
 
-        # 临时移除不允许的工具（含 Tool 对象和函数工具）
-        registry = self.tool_registry
-        if not hasattr(registry, '_temp_disabled_tools'):
-            registry._temp_disabled_tools = {}  # type: ignore[attr-defined]
-        if not hasattr(registry, '_temp_disabled_functions'):
-            registry._temp_disabled_functions = {}  # type: ignore[attr-defined]
+        历史行为：在 `_apply_tool_filter` 中删除的工具重新加回。
+        新行为（contextvars 路径）：无需恢复，块退出自动 cleanup。
 
-        for tool_name in original_tools:
-            if tool_name not in filtered_tools:
-                # Tool 对象
-                tool = registry.get_tool(tool_name)
-                if tool:
-                    registry._temp_disabled_tools[tool_name] = tool  # type: ignore[attr-defined]
-                    if tool_name in registry._tools:
-                        del registry._tools[tool_name]
-                # 函数工具
-                func = registry.get_function(tool_name)
-                if func is not None:
-                    registry._temp_disabled_functions[tool_name] = registry._functions[tool_name]  # type: ignore[attr-defined]
-                    if tool_name in registry._functions:
-                        del registry._functions[tool_name]
-
-        return original_tools
-
-    def _restore_tools(self, original_tools: List[str]):
-        """恢复原始工具列表
-
-        Args:
-            original_tools: 原始工具名称列表
+        本方法保留作为向后兼容层，仅记录 warning。
         """
         if not self.tool_registry:
             return
-
-        # 恢复被禁用的工具（Tool 对象）
-        if hasattr(self.tool_registry, '_temp_disabled_tools'):
-            for tool_name, tool in self.tool_registry._temp_disabled_tools.items():
-                self.tool_registry._tools[tool_name] = tool
-            self.tool_registry._temp_disabled_tools = {}
-
-        # 恢复被禁用的函数工具
-        if hasattr(self.tool_registry, '_temp_disabled_functions'):
-            for tool_name, func_info in self.tool_registry._temp_disabled_functions.items():
-                self.tool_registry._functions[tool_name] = func_info
-            self.tool_registry._temp_disabled_functions = {}
+        #
+        # 不再操作 _temp_disabled_* 私有 dict
+        self.logger.debug(
+            "_restore_tools 已 deprecated（contextvars 自动 cleanup）；参数 %s 忽略",
+            len(original_tools),
+        )
 
     def _get_subagent_metadata(self, duration: float, error: Optional[str]) -> Dict[str, Any]:
         """获取子代理执行元数据
@@ -1512,78 +1331,6 @@ class Agent(ABC):
 
         return "\n".join(summary_parts)
 
-
-    def _register_task_tool(self):
-        """注册 TaskTool（子代理工具）
-
-        自动注册逻辑，支持用户自定义工厂函数。
-        """
-        from agentorchestra.capability.tools.builtin.task_tool import TaskTool
-
-        from ..agents.factory import default_subagent_factory
-
-        # 创建子代理工厂函数
-        def agent_factory(agent_type: str) -> Agent:
-            """子代理工厂函数"""
-            # 决定使用哪个 LLM
-            if self.config.subagent_use_light_llm:
-                # 使用轻量模型
-                light_llm = self._create_light_llm()
-            else:
-                # 使用主模型
-                light_llm = self.llm
-
-            # 使用默认工厂创建子代理
-            return default_subagent_factory(
-                agent_type=agent_type,
-                llm=light_llm,
-                tool_registry=self.tool_registry,
-                config=self.config
-            )
-
-        # 创建并注册 TaskTool
-        task_tool = TaskTool(
-            agent_factory=agent_factory,
-            tool_registry=self.tool_registry,
-            config=self.config
-        )
-
-        self.tool_registry.register_tool(task_tool)
-
-    def _register_todowrite_tool(self):
-        """注册 TodoWriteTool（进度管理工具）
-
-        自动注册逻辑，在 __init__ 中调用（如果启用）
-        """
-        from agentorchestra.capability.tools.builtin.todowrite_tool import TodoWriteTool
-
-        # 创建并注册 TodoWriteTool
-        todo_tool = TodoWriteTool(
-            project_root=str(self.working_dir),
-            persistence_dir=self.config.todowrite_persistence_dir
-        )
-
-        self.tool_registry.register_tool(todo_tool)
-
-    def _register_devlog_tool(self):
-        """注册 DevLogTool（开发日志工具）
-
-        自动注册逻辑，在 __init__ 中调用（如果启用）
-        """
-        from agentorchestra.capability.tools.builtin.devlog_tool import DevLogTool
-
-        # 获取 session_id（如果有 trace_logger 则使用其 session_id）
-        session_id = self.trace_logger.session_id if self.trace_logger else generate_session_id()
-
-        # 创建并注册 DevLogTool
-        devlog_tool = DevLogTool(
-            session_id=session_id,
-            agent_name=self.name,
-            project_root=str(self.working_dir),
-            persistence_dir=self.config.devlog_persistence_dir
-        )
-
-        self.tool_registry.register_tool(devlog_tool)
 
     def _create_light_llm(self) -> SymphonyLLM:
         """创建轻量模型 LLM 实例
@@ -1703,6 +1450,12 @@ class Agent(ABC):
         """发起 HITL 中断。
 
         业务侧捕获 InterruptPending 后调 agent.resume_with(token, response)。
+
+
+        现在统一检测 loop 状态：
+        - 有运行 loop：fire-and-forget create_task（无需等待落库，由 scheduler 后续 flush）
+        - 无运行 loop：使用 `asyncio.run()` 同步等待
+        - 任意情况都 raise InterruptPending（业务必须捕获）
         """
         import asyncio
         import uuid as _uuid
@@ -1724,16 +1477,18 @@ class Agent(ABC):
             payload=payload or {},
         )
 
-        # 同步写库
-        loop = asyncio.get_event_loop() if asyncio.get_event_loop().is_running() else None
-        if loop is not None and not loop.is_closed():
-            loop.create_task(self.checkpoint_store.create_interrupt(intr))
-        else:
-            # 测试或同步上下文：直接 asyncio.run
-            try:
-                asyncio.run(self.checkpoint_store.create_interrupt(intr))
-            except RuntimeError:
-                pass
+        #使用 try 检测 loop 状态，避免 get_event_loop() 本身在某些 Python 版本中抛
+        # DeprecationWarning（get_event_loop() 在 Python 3.10+ 无 loop 时已不建议使用）
+        try:
+            running_loop = asyncio.get_running_loop()
+            # 在已有 loop 中：fire-and-forget 落库（用户捕获 InterruptPending 后会等同步逻辑）
+            running_loop.create_task(
+                self.checkpoint_store.create_interrupt(intr),
+                name=f"interrupt-create-{token}",
+            )
+        except RuntimeError:
+            # 无运行 loop：同步等待落库
+            asyncio.run(self.checkpoint_store.create_interrupt(intr))
 
         raise InterruptPending(token=token, reason=reason, payload=payload or {})
 

@@ -16,7 +16,7 @@ __all__ = [
     "ReflectionAgent",
     "PlanSolveAgent",
     "PlanAndSolveAgent",  # 向后兼容
-    "LoopAgent",  # 新增
+    "LoopAgent", 
 
     # 子代理工厂函数
     "create_agent",

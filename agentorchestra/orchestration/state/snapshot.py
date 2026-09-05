@@ -70,6 +70,11 @@ class SnapshotWorker:
 
     启动后定期检查所有 thread，到达阈值则拍快照。
     可与 Agent.arun() 协同：在事件循环中常驻。
+
+
+    - _stop 事件在 __init__ 中直接创建，不依赖 loop.is_running()（消除竞态）
+    - start() 路径也独立处理 stop 事件
+    - 启动时自动从 store 发现活跃 threads（不依赖外部注入）
     """
 
     def __init__(
@@ -81,11 +86,23 @@ class SnapshotWorker:
         self.store = store
         self.policy = policy or SnapshotPolicy()
         self._task: Optional[asyncio.Task[Any]] = None
-        self._stop: Optional[asyncio.Event] = (
-            asyncio.Event() if asyncio.get_event_loop().is_running() else None
-        )
-        # 测试便捷：注入需要监控的 thread_ids
-        self._thread_ids_provider: Callable[[], List[str]] = thread_ids_provider or (lambda: [])
+        #直接创建 Event（不依赖 get_event_loop；asyncio.Event() 无 loop 也能构造）
+        self._stop: asyncio.Event = asyncio.Event()
+        # 测试便捷：注入需要监控的 thread_ids；默认从 store 自动发现
+        self._thread_ids_provider: Callable[[], List[str]] = thread_ids_provider or self._default_thread_ids
+
+    async def _default_thread_ids(self) -> List[str]:
+        """默认 thread_ids 提供器：从 store 列举所有活跃 thread。"""
+        #避免在无 loop 时调用 store.list_threads()
+        try:
+            rows = await self.store.list_threads()  # type: ignore[attr-defined]
+            return [r["thread_id"] for r in rows if r.get("status") != "closed"]
+        except AttributeError:
+            # store 不支持 list_threads 时回退空列表（保留向后兼容）
+            return []
+        except Exception as e:
+            logger.warning(f"snapshot thread discovery failed: {e}")
+            return []
 
     async def maybe_snapshot(self, thread_id: str) -> Optional[Snapshot]:
         """根据策略决定是否给指定 thread 拍快照。"""
@@ -124,7 +141,8 @@ class SnapshotWorker:
     async def run_once(self) -> int:
         """执行一轮检查；返回本轮拍下的快照数。"""
         count = 0
-        for tid in self._thread_ids_provider():
+        thread_ids = await _maybe_await(self._thread_ids_provider)
+        for tid in thread_ids:
             try:
                 snap = await self.maybe_snapshot(tid)
                 if snap is not None:
@@ -134,13 +152,12 @@ class SnapshotWorker:
         return count
 
     async def _loop(self) -> None:
-        while self._stop is None or not self._stop.is_set():
+        #始终使用 _stop.wait()；不再有 `_stop is None → return` 短路
+        while not self._stop.is_set():
             try:
                 await self.run_once()
             except Exception as e:
                 logger.warning(f"snapshot loop error: {e}")
-            if self._stop is None:
-                return
             try:
                 await asyncio.wait_for(
                     self._stop.wait(),
@@ -156,15 +173,14 @@ class SnapshotWorker:
         if not self.policy.enabled:
             raise RuntimeError("SnapshotPolicy.enabled=False；先启用再 start")
 
+        #不重置 _stop，避免丢失已 set 的信号
         loop = asyncio.get_event_loop()
-        self._stop = asyncio.Event()
         self._task = loop.create_task(self._loop())
         return self._task
 
     async def stop(self) -> None:
         """停止后台任务。"""
-        if self._stop is not None:
-            self._stop.set()
+        self._stop.set()
         if self._task is not None:
             self._task.cancel()
             try:
@@ -172,3 +188,11 @@ class SnapshotWorker:
             except (asyncio.CancelledError, Exception):
                 pass
             self._task = None
+        #保留 _stop 实例供下次 start() 复用（避免 Event 重建引入 bug）
+
+
+async def _maybe_await(value: Any) -> Any:
+    """如果 value 是 awaitable 则 await；否则直接返回。"""
+    if asyncio.iscoroutine(value):
+        return await value
+    return value

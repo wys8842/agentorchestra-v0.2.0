@@ -127,23 +127,50 @@ class TransactionCoordinator:
         principal: Optional[str] = None,
         roles: Optional[List[str]] = None,
         permission_checker: Optional[Any] = None,
+        request_payload: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[TxContext]:
         """事务上下文管理器。
 
-        幂等键自动生成：sha256(actions 签名)。
+        幂等键自动生成：sha256(actions 签名 + request_payload + resources)。
         进入即 begin（幂等查重 + 获取资源锁 + TX_BEGIN）。
         退出无异常 → commit；异常 → 逆序补偿 + DLQ。
+
+        Args:
+            idempotency_key: 外部传入的幂等键；None 则自动生成。
+            resources: 事务需要持有的资源键列表（用于锁）。
+            timeout: 事务超时（秒）。
+            principal: 当前主体。
+            roles: 当前角色列表。
+            permission_checker: 自定义权限检查器。
+            request_payload: 业务请求参数（**重要**：纳入幂等键哈希，避免
+                不同参数但同 action 名的事务被错误去重）。
 
         M3：principal/roles 注入当前身份（IdentityService + ctx）；
         permission_checker 可选（未提供回退 coordinator 装配的）。
         """
         resources = resources or []
+        request_payload = request_payload or {}
         tx_id = f"tx-{uuid.uuid4().hex[:12]}"
 
-        # 幂等 key：未显式传 → 自动生成（基于已注册动作签名）
-        key = idempotency_key or IdempotencyStore.generate_key(
-            "tx", sorted(self._actions.keys())
-        )
+        # 幂等 key：未显式传 → 自动生成（基于 action 签名 + 请求参数 + 资源）
+        #原实现仅哈希 action 名，导致 charge(alice, 50) 与 charge(alice, 9999) 碰撞
+        import json as _json
+        if idempotency_key:
+            key = idempotency_key
+        else:
+            sig_parts = [
+                json.dumps(
+                    {"name": name, "params": getattr(self._actions[name], "params_template", {})},
+                    sort_keys=True,
+                    ensure_ascii=False,
+                )
+                for name in sorted(self._actions.keys())
+            ]
+            payload_json = _json.dumps(request_payload, sort_keys=True, ensure_ascii=False)
+            key = IdempotencyStore.generate_key(
+                "tx",
+                sig_parts + [payload_json, ",".join(sorted(resources))],
+            )
         request_hash = IdempotencyStore.generate_key(key, resources)
 
         # 幂等查重
@@ -181,7 +208,9 @@ class TransactionCoordinator:
             )
 
             for rk in resources:
-                if await self.lock.acquire(rk, tx_id):
+                #：acquire 返回 Optional[LockRecord] 而非 bool
+                acquired_record = await self.lock.acquire(rk, tx_id)
+                if acquired_record is not None:
                     acquired.append(rk)
                 else:
                     # 锁冲突：清理已获取锁，抛 TxConflict
@@ -237,7 +266,7 @@ class TransactionCoordinator:
     ) -> None:
         """逆序补偿已完成动作。补偿失败（含进 DLQ）→ compensation_failed。"""
         comp_result = await self.compensation.compensate(
-            ctx.tx_id, ctx.completed, ctx.completed_params
+            ctx, ctx.completed, ctx.completed_params
         )
 
         if comp_result["failed"]:

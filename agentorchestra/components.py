@@ -6,7 +6,7 @@
 设计要点：
 - 全部懒加载：访问 `Components.xxx` 时才构建/查询，未显式注册则回退既有全局单例（向后兼容）。
 - 可插拔：通过 `Components.register_<kind>(impl)` 覆盖默认实现；`reset()` 还原（测试用）。
-- 无新增依赖：本模块只做聚合/委托，不复制各组件职责。
+- 本模块只做聚合/委托，不复制各组件职责。
 
 用法：
     from agentorchestra.components import Components

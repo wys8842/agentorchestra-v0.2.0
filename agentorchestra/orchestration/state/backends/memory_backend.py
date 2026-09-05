@@ -36,18 +36,27 @@ class InMemoryCheckpointStore(CheckpointStore):
     """
 
     def __init__(self):
-        self._lock = threading.RLock()
+        self._lock = threading.RLock()  # 线程安全锁
         self._threads: Dict[str, Dict[str, Any]] = {}
         self._checkpoints: Dict[str, Dict[str, Checkpoint]] = {}  # thread_id -> {cp_id -> Checkpoint}
-        self._wal: Dict[str, List[WALEntry]] = {}
-        self._snapshots: Dict[str, List[Snapshot]] = {}
-        self._interrupts: Dict[str, Interrupt] = {}
-        self._locks: Dict[str, LockRecord] = {}
+        self._wal: Dict[str, List[WALEntry]] = {}    # thread_id -> WAL
+        self._snapshots: Dict[str, List[Snapshot]] = {}    # thread_id -> snapshots
+        self._interrupts: Dict[str, Interrupt] = {}    # thread_id -> Interrupt
+        self._locks: Dict[str, LockRecord] = {}    # thread_id -> LockRecord
+        #独立维护 per-resource 单调递增 version 计数器（乐观并发关键）
+        self._lock_versions: Dict[str, int] = {}
+        #fencing token 单调递增（全局 + resource_key 双维度）
+        self._fencing_token: int = 0    
+        #DLQ id 自增计数器
+        self._dlq_next_id: int = 1
         self._idempotency: Dict[str, IdempotencyRecord] = {}
         self._dlq: List[DLQEntry] = []
         self._inbox_messages: Dict[str, InboxMessage] = {}
         self._inbox_acks: Dict[str, InboxAck] = {}
         self._audit: List[AuditEntry] = []
+        #：iteration snapshot 索引（O(1) 查询）
+        # key: (graph_id, thread_id)，value: {"iter": {node: count}, "updated_at": datetime}
+        self._iter_snapshots: Dict[str, Dict[str, Any]] = {}
 
     async def init(self) -> None:
         return None
@@ -91,6 +100,23 @@ class InMemoryCheckpointStore(CheckpointStore):
             if t:
                 t["status"] = status
                 t["updated_at"] = datetime.now()
+
+    async def list_threads(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """列出所有 thread（snapshot worker 自动发现用）。"""
+        with self._lock:
+            threads = list(self._threads.values())
+            if status is not None:
+                threads = [t for t in threads if t.get("status") == status]
+            return [
+                {
+                    "thread_id": t["thread_id"],
+                    "status": t["status"],
+                    "created_at": t["created_at"].isoformat(),
+                    "updated_at": t["updated_at"].isoformat(),
+                    "metadata": dict(t["metadata"]),
+                }
+                for t in threads
+            ]
 
     # ---------------- Checkpoint ----------------
 
@@ -169,6 +195,18 @@ class InMemoryCheckpointStore(CheckpointStore):
         with self._lock:
             return self._interrupts.get(token)
 
+    async def list_interrupts(
+        self, status: Optional[str] = None, thread_id: Optional[str] = None
+    ) -> List[Interrupt]:
+        """InterruptResumer 用：列出中断，可选过滤。"""
+        with self._lock:
+            items = list(self._interrupts.values())
+            if status is not None:
+                items = [i for i in items if i.status.value == status]
+            if thread_id is not None:
+                items = [i for i in items if i.thread_id == thread_id]
+            return list(items)
+
     # ---------------- 锁（M1） ----------------
 
     async def acquire_lock(
@@ -181,11 +219,16 @@ class InMemoryCheckpointStore(CheckpointStore):
                 exp = existing.expires_at
                 if exp is None or exp > now:
                     return None
-                # 过期：抢占
+                # 过期：抢占；version 沿用单调递增计数（不是归零！）
                 del self._locks[resource_key]
+            #使用独立的 per-resource 单调递增 version 计数器
+            self._lock_versions[resource_key] = self._lock_versions.get(resource_key, 0) + 1
+            #fencing_token 单调递增
+            self._fencing_token += 1
             record = LockRecord(
                 resource_key=resource_key,
-                version=0,
+                version=self._lock_versions[resource_key],
+                fencing_token=self._fencing_token,
                 owner_tx=owner_tx,
                 held_since=now,
                 expires_at=(
@@ -195,30 +238,48 @@ class InMemoryCheckpointStore(CheckpointStore):
             self._locks[resource_key] = record
             return record
 
-    async def compare_and_swap(
-        self, resource_key: str, expected_version: int, owner_tx: str
-    ) -> bool:
-        with self._lock:
-            existing = self._locks.get(resource_key)
-            if existing is None or existing.owner_tx != owner_tx:
-                return False
-            if existing.version != expected_version:
-                return False
-            existing.version = expected_version + 1
-            return True
-
     async def release_lock(self, resource_key: str, owner_tx: str) -> bool:
         with self._lock:
             existing = self._locks.get(resource_key)
             if existing is None or existing.owner_tx != owner_tx:
                 return False
             del self._locks[resource_key]
+            #同步清理 _lock_versions（防 per-resource dict 单调增长）
+            self._lock_versions.pop(resource_key, None)
             return True
 
     async def read_version(self, resource_key: str) -> Optional[int]:
         with self._lock:
             existing = self._locks.get(resource_key)
             return existing.version if existing else None
+
+    async def read_fencing_token(self, resource_key: str) -> Optional[int]:
+        """读取 fencing_token（防僵尸事务绕过 TTL 后误写）。"""
+        with self._lock:
+            existing = self._locks.get(resource_key)
+            return existing.fencing_token if existing else None
+
+    async def compare_and_swap(
+        self,
+        resource_key: str,
+        expected_version: int,
+        owner_tx: str,
+        expected_fencing_token: Optional[int] = None,
+    ) -> bool:
+        """CAS 可选 fencing_token 校验。"""
+        with self._lock:
+            existing = self._locks.get(resource_key)
+            if existing is None or existing.owner_tx != owner_tx:
+                return False
+            if existing.version != expected_version:
+                return False
+            if (
+                expected_fencing_token is not None
+                and existing.fencing_token != expected_fencing_token
+            ):
+                return False
+            existing.version = expected_version + 1
+            return True
 
     # ---------------- 幂等（M1） ----------------
 
@@ -246,10 +307,35 @@ class InMemoryCheckpointStore(CheckpointStore):
                 del self._idempotency[k]
             return len(expired)
 
+    # ---------------- Iteration snapshot ----------------
+
+    async def save_iteration_snapshot(
+        self, graph_id: str, thread_id: str, iteration: Dict[str, int]
+    ) -> None:
+        """（H-7）：O(1) 保存（直接覆盖 key）。"""
+        with self._lock:
+            key = f"{graph_id}:{thread_id}"
+            self._iter_snapshots[key] = {
+                "iter": dict(iteration),
+                "updated_at": datetime.now(),
+            }
+
+    async def load_iteration_snapshot(
+        self, graph_id: str, thread_id: str
+    ) -> Dict[str, int]:
+        """（H-7）：O(1) 加载。"""
+        with self._lock:
+            key = f"{graph_id}:{thread_id}"
+            snap = self._iter_snapshots.get(key)
+            return dict(snap["iter"]) if snap else {}
+
     # ---------------- DLQ（M1） ----------------
 
     async def enqueue_dlq(self, entry: DLQEntry) -> None:
         with self._lock:
+            #分配 id
+            entry.id = self._dlq_next_id
+            self._dlq_next_id += 1
             self._dlq.append(entry)
 
     async def list_dlq(
@@ -259,6 +345,18 @@ class InMemoryCheckpointStore(CheckpointStore):
             return [
                 e for e in self._dlq if e.status == status
             ][:limit]
+
+    async def resolve_dlq(self, dlq_id: int, note: Optional[str] = None) -> None:
+        """（C14 + C-N4）：标记 DLQ 条目已解决（按 id 定位）。"""
+        with self._lock:
+            entry = next((e for e in self._dlq if e.id == dlq_id), None)
+            if entry is not None:
+                entry.status = "resolved"
+                entry.resolved_at = datetime.now()
+                if note:
+                    entry.error = f"{entry.error} | resolved_note={note}"
+            else:
+                raise ValueError(f"DLQ entry id={dlq_id} not found")
 
     # ---------------- Inbox（M2） ----------------
 
@@ -317,6 +415,8 @@ class InMemoryCheckpointStore(CheckpointStore):
             ]
             for mid in expired:
                 del self._inbox_messages[mid]
+                #  / H-9：级联清理 ack 记录（防孤儿回执）
+                self._inbox_acks.pop(mid, None)
             return len(expired)
 
     # ---------------- 审计（M3 WORM） ----------------

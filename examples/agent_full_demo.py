@@ -12,25 +12,19 @@
 场景：运维助手 Agent 处理"客户下单支付"业务，全程可观测、可治理、可监控。
 """
 import json
-import sys
 import time
 
-sys.path.insert(0, 'D:/proj/agentorchestra')
+# 标准领域路径（不需要 sys.path 注入；安装后自然可导入）
+from agentorchestra.runtime.agents.react_agent import ReActAgent
+from agentorchestra.runtime.core.config import Config
+from agentorchestra.runtime.core.health import HealthCheck
+from agentorchestra.runtime.core.logging import get_logger, setup_logging
+from agentorchestra.runtime.core.message import Message
+from agentorchestra.runtime.core.metrics import get_metrics
+from agentorchestra.runtime.core.monitor import MonitorServer
+from agentorchestra.runtime.core.ratelimit import RateLimiter
+from agentorchestra.runtime.core.tracing import MemoryExporter, get_tracer
 
-# ==================== core：配置/日志/可观测 ====================
-# ==================== agents：Agent 范式 ====================
-from agentorchestra.agents.react_agent import ReActAgent
-from agentorchestra.core.config import Config
-from agentorchestra.core.health import HealthCheck
-from agentorchestra.core.logging import get_logger, setup_logging
-from agentorchestra.core.message import Message
-from agentorchestra.core.metrics import get_metrics
-from agentorchestra.core.monitor import MonitorServer
-from agentorchestra.core.ratelimit import RateLimiter
-from agentorchestra.core.tracing import MemoryExporter, get_tracer
-
-# ==================== observability：轨迹记录 ====================
-# ==================== ontology：业务语义层 ====================
 from agentorchestra.ontology import (
     ActionType,
     Function,
@@ -46,11 +40,10 @@ from agentorchestra.ontology import (
     Workflow,
 )
 
-# ==================== tools：工具系统 ====================
-from agentorchestra.tools.base import Tool, ToolParameter
-from agentorchestra.tools.builtin.calculator import CalculatorTool
-from agentorchestra.tools.registry import ToolRegistry
-from agentorchestra.tools.response import ToolResponse
+from agentorchestra.capability.tools.base import Tool, ToolParameter
+from agentorchestra.capability.tools.builtin.calculator import CalculatorTool
+from agentorchestra.capability.tools.registry import ToolRegistry
+from agentorchestra.capability.tools.response import ToolResponse
 
 
 def section(t):

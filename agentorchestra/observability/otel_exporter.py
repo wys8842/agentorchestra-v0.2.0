@@ -83,6 +83,14 @@ class OTLPHttpJsonExporter(SpanExporter):
 
     # ---------------- 载荷构建 ----------------
 
+    @staticmethod
+    def _event_time_ns(event: Dict[str, Any]) -> int:
+        """（H-N6）：优先用 span 记录的 wall_ns；fallback 才用 monotonic→ns 反推。"""
+        if "wall_ns" in event:
+            return int(event["wall_ns"])
+        # Fallback：旧版本 Span 无 wall_ns 字段，monotonic→ns 反推仅作过渡
+        return int(event.get("timestamp", 0) * 1e9)
+
     def _build_payload(self, span: Span) -> Dict[str, Any]:
         """构造 OTLP/HTTP JSON resourceSpans 载荷。"""
         attributes = []
@@ -104,7 +112,8 @@ class OTLPHttpJsonExporter(SpanExporter):
             "status": status,
             "events": [
                 {
-                    "timeUnixNano": self._monotonic_to_ns(int(e["timestamp"] * 1e9)),
+                    #：wall clock ns 而非 monotonic
+                    "timeUnixNano": self._event_time_ns(e),
                     "name": e["name"],
                     "attributes": [
                         {"key": k, "value": self._attr_value(v)}
@@ -160,12 +169,13 @@ class OTLPHttpJsonExporter(SpanExporter):
 
     @staticmethod
     def _start_ns(span: Span) -> int:
-        # 粗略：用当前墙钟 - 剩余时长 近似 start（事件单调时钟转墙钟困难）
-        return int((time.time() - span.duration_ms / 1000.0) * 1e9)
+        #用真实记录的 wall clock（不依赖 monotonic→wall 反推）
+        return span.start_wall_ns
 
     @staticmethod
     def _end_ns(span: Span) -> int:
-        return int(time.time() * 1e9)
+        #优先用 span.end 时记录的 wall clock；未 end 时退回 now
+        return span.end_wall_ns if span.end_wall_ns is not None else time.time_ns()
 
     @staticmethod
     def _monotonic_to_ns(monotonic_ns: int) -> int:
@@ -180,12 +190,80 @@ class OTLPHttpJsonExporter(SpanExporter):
             url, data=data,
             headers={
                 "Content-Type": "application/json",
-                "User-Agent": "agentorchestra/1.0",
+                "User-Agent": "agentorchestra/0.1",
             },
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
             resp.read()
+
+    def export_batch(self, spans: List["Span"]) -> None:
+        """（H-9）：批处理多条 span 为单次 OTLP POST（resourceSpans[].scopeSpans[].spans[]）。
+
+        Args:
+            spans: 待发送的 span 列表。
+        """
+        if not self.enabled or not spans:
+            return
+        # 构造 resourceSpans 内含多条 span（共享同一 resource/scope）
+        attributes_payload = []
+        events_payload = []
+
+        otel_spans = []
+        for span in spans:
+            attrs = [
+                {"key": k, "value": self._attr_value(v)}
+                for k, v in (span.attributes or {}).items()
+            ]
+            status: Dict[str, Any] = {"code": 2 if span.status == "ERROR" else 1}
+            otel_span: Dict[str, Any] = {
+                "traceId": self._to_hex_trace_id(span.trace_id),
+                "spanId": self._to_hex_span_id(span.span_id),
+                "name": span.name,
+                "kind": 2,
+                "startTimeUnixNano": self._start_ns(span),
+                "endTimeUnixNano": self._end_ns(span),
+                "attributes": attrs,
+                "status": status,
+                "events": [
+                    {
+                        "timeUnixNano": self._event_time_ns(e),
+                        "name": e["name"],
+                        "attributes": [
+                            {"key": k, "value": self._attr_value(v)}
+                            for k, v in (e.get("attributes") or {}).items()
+                        ],
+                    }
+                    for e in span.events
+                ],
+            }
+            if span.parent_id:
+                otel_span["parentSpanId"] = self._to_hex_span_id(span.parent_id)
+            otel_spans.append(otel_span)
+
+        payload = {
+            "resourceSpans": [
+                {
+                    "resource": {
+                        "attributes": [
+                            {
+                                "key": "service.name",
+                                "value": {"stringValue": self.service_name},
+                            }
+                        ]
+                    },
+                    "scopeSpans": [
+                        {"scope": {"name": "agentorchestra"}, "spans": otel_spans}
+                    ],
+                }
+            ]
+        }
+        try:
+            self._post(payload)
+            self._sent += len(spans)
+        except Exception as e:
+            self._failed += len(spans)
+            logger.warning("OTLP 批量 export 失败（%d spans）：%s", len(spans), e)
 
 
 # 默认 exporter（NoOp 等价：enabled=False）

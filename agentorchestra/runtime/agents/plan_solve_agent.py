@@ -1,4 +1,9 @@
-"""Plan and Solve Agent实现 - 分解规划与逐步执行的智能体"""
+"""Plan and Solve Agent实现 - 分解规划与逐步执行的智能体
+
+：模块级函数现委派到 Agent 基类的统一实现（_build_tool_schemas /
+_map_parameter_type / _execute_tool_call），消除 ~150 行重复代码；保留模块级符号作为
+向后兼容别名。
+"""
 
 import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, cast
@@ -16,80 +21,21 @@ if TYPE_CHECKING:
 
 
 def _build_tool_schemas_from_registry(tool_registry: 'ToolRegistry') -> List[Dict[str, Any]]:
-    """从工具注册表构建工具 JSON Schema（模块级函数，供 Executor 使用）"""
+    """从工具注册表构建工具 JSON Schema。
+
+    保留模块级符号作为向后兼容别名；新代码请直接用 `Agent._build_tool_schemas()`。
+    """
     if not tool_registry:
         return []
-
-    schemas: List[Dict[str, Any]] = []
-
-    for tool in tool_registry.get_all_tools():
-        properties: Dict[str, Any] = {}
-        required: List[str] = []
-
-        try:
-            parameters = tool.get_parameters()
-        except Exception:
-            parameters = []
-
-        for param in parameters:
-            properties[param.name] = {
-                "type": _map_parameter_type(param.type),
-                "description": param.description or ""
-            }
-            if param.default is not None:
-                properties[param.name]["default"] = param.default
-            if getattr(param, "required", True):
-                required.append(param.name)
-
-        schema: Dict[str, Any] = {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description or "",
-                "parameters": {
-                    "type": "object",
-                    "properties": properties
-                }
-            }
-        }
-        if required:
-            schema["function"]["parameters"]["required"] = required
-        schemas.append(schema)
-
-    function_map = getattr(tool_registry, "_functions", {})
-    for name, info in function_map.items():
-        schemas.append({
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": info.get("description", ""),
-                "parameters": {
-                    "type": "object",
-                    "properties": {}
-                }
-            }
-        })
-
-    return schemas
+    return Agent._build_tool_schemas(tool_registry)
 
 
 def _map_parameter_type(param_type: str) -> str:
-    """映射参数类型到 JSON Schema 类型"""
-    type_mapping = {
-        "string": "string",
-        "str": "string",
-        "integer": "integer",
-        "int": "integer",
-        "number": "number",
-        "float": "number",
-        "boolean": "boolean",
-        "bool": "boolean",
-        "array": "array",
-        "list": "array",
-        "object": "object",
-        "dict": "object",
-    }
-    return type_mapping.get(param_type.lower(), "string")
+    """映射参数类型到 JSON Schema 类型。
+
+    注：基类 `_map_parameter_type` 是 `@staticmethod`，直接委派。
+    """
+    return Agent._map_parameter_type(param_type)
 
 
 def _execute_tool_call_from_registry(
@@ -97,70 +43,32 @@ def _execute_tool_call_from_registry(
     tool_name: str,
     arguments: Dict[str, Any]
 ) -> str:
-    """执行工具调用并返回字符串结果（模块级函数，供 Executor 使用）
+    """执行工具调用并返回字符串结果。
 
-    统一的工具执行逻辑：
-    - 熔断检查、观测埋点统一由 registry.execute_tool 完成
-    - 本函数只负责参数类型转换与响应格式化
-
-    Args:
-        registry: 工具注册表
-        tool_name: 工具名称
-        arguments: 工具参数
-
-    Returns:
-        工具执行结果（字符串格式）
+    由于 Agent._execute_tool_call 是实例方法且依赖 self.tool_registry，
+    这里通过临时 setattr 桥接（最轻量、不增加胶水类）。
     """
     if not registry:
         return "❌ 错误：未配置工具注册表"
+    _stub = _NoOpAgent._minimal_instance()
+    _stub.tool_registry = registry
+    return _stub._execute_tool_call(tool_name, arguments)
 
-    tool = registry.get_tool(tool_name)
-    if tool is not None:
-        try:
-            parameters = tool.get_parameters()
-        except Exception:
-            parameters = []
-        type_mapping = {param.name: param.type for param in parameters}
-        converted: Dict[str, Any] = {}
-        for key, value in arguments.items():
-            param_type = type_mapping.get(key)
-            if not param_type:
-                converted[key] = value
-                continue
-            try:
-                normalized = param_type.lower()
-                if normalized in {"number", "float"}:
-                    converted[key] = float(value)
-                elif normalized in {"integer", "int"}:
-                    converted[key] = int(value)
-                elif normalized in {"boolean", "bool"}:
-                    if isinstance(value, bool):
-                        converted[key] = value
-                    elif isinstance(value, (int, float)):
-                        converted[key] = bool(value)
-                    elif isinstance(value, str):
-                        converted[key] = value.lower() in ("true", "1", "yes")
-                    else:
-                        converted[key] = bool(value)
-                else:
-                    converted[key] = str(value)
-            except (ValueError, TypeError):
-                converted[key] = str(value)
-        arguments = converted
 
-    try:
-        response = registry.execute_tool(tool_name, arguments)  # type: ignore[arg-type]
-    except Exception as exc:
-        return f"❌ 工具调用失败：{exc}"
+class _NoOpAgent(Agent):
+    """仅作为模块级函数到 Agent 实例方法的桥接器（不参与业务运行）。
 
-    from agentorchestra.capability.tools.response import ToolStatus
-    if response.status == ToolStatus.ERROR:
-        error_code = response.error_info.get("code", "UNKNOWN") if response.error_info else "UNKNOWN"
-        return f"❌ 错误 [{error_code}]: {response.text}"
-    elif response.status == ToolStatus.PARTIAL:
-        return f"⚠️ 部分成功: {response.text}"
-    else:
-        return response.text
+    使用 _minimal_instance 工厂绕过 __init__（避免 name/llm 必传约束）。
+    """
+
+    @classmethod
+    def _minimal_instance(cls) -> "_NoOpAgent":
+        """创建无参实例（绕过 __init__）。"""
+        instance = cls.__new__(cls)
+        return instance
+
+    def run(self, input_text: str, **kwargs) -> str:  # type: ignore[override]
+        raise NotImplementedError("_NoOpAgent 仅用于桥接，不应调用 run()")
 
 
 class Planner:

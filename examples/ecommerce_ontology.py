@@ -5,8 +5,7 @@
 """
 import sys
 
-sys.path.insert(0, 'D:/proj/agentorchestra')
-
+# 标准领域路径（不需要 sys.path 注入；安装后自然可导入）
 from agentorchestra.ontology import (
     ActionType,
     Function,
@@ -18,8 +17,8 @@ from agentorchestra.ontology import (
     OntologyEngine,
     SecurityContext,
 )
-from agentorchestra.tools.base import ToolParameter
-from agentorchestra.tools.registry import ToolRegistry
+from agentorchestra.capability.tools.base import ToolParameter
+from agentorchestra.capability.tools.registry import ToolRegistry
 
 
 def section(t):

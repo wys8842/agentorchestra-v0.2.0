@@ -32,8 +32,10 @@ class Span:
         self.parent_id = parent_id
         self.attributes = attributes or {}
         self.status: str = "OK"  # OK / ERROR
-        self.start_time = time.monotonic()
+        self.start_time = time.monotonic()  # 用于 duration 计算
+        self.start_wall_ns = time.time_ns()  # 用于 OTLP 等需要 wall-clock 的导出器
         self.end_time: Optional[float] = None
+        self.end_wall_ns: Optional[int] = None  # 真实结束 wall clock
         self.events: List[Dict[str, Any]] = []
 
     def set_attribute(self, key: str, value: Any) -> None:
@@ -41,10 +43,16 @@ class Span:
         self.attributes[key] = value
 
     def add_event(self, name: str, attributes: Optional[Dict] = None) -> None:
-        """添加事件（span 内的时间点）"""
+        """添加事件（span 内的时间点）
+
+
+        monotonic 仅用于 duration 计算，不适合跨主机追踪。
+        """
+        now_wall_ns = time.time_ns()
         self.events.append({
             "name": name,
             "timestamp": time.monotonic(),
+            "wall_ns": now_wall_ns,  #：wall clock ns（OTLP timeUnixNano 用）
             "attributes": attributes or {},
         })
 
@@ -56,6 +64,7 @@ class Span:
         """结束 span"""
         if self.end_time is None:
             self.end_time = time.monotonic()
+            self.end_wall_ns = time.time_ns()
 
     @property
     def duration_ms(self) -> float:
@@ -154,12 +163,29 @@ class JsonlExporter(SpanExporter):
 
 
 class Tracer:
-    """追踪器（线程安全，管理 trace 上下文）"""
+    """追踪器（线程安全，管理 trace 上下文）。
 
-    def __init__(self, exporter: Optional[SpanExporter] = None):
+
+    而是入 `SpanBatcher` 缓冲。窗口（time_ms）或阈值（max_size）触发后
+    调 `getattr(exporter, 'export_batch', lambda x: [export(s) for s in x])(spans)`
+    真正发挥批量能力。
+    """
+
+    def __init__(
+        self,
+        exporter: Optional[SpanExporter] = None,
+        batch_max_size: int = 50,
+        batch_window_ms: float = 1000.0,
+    ):
         self.exporter = exporter or MemoryExporter()
         # 线程级 span 栈（支持嵌套）
         self._local = threading.local()
+        #span 缓冲（线程安全）
+        self._batcher = SpanBatcher(
+            exporter=self.exporter,
+            max_size=batch_max_size,
+            window_ms=batch_window_ms,
+        )
 
     # ==================== 上下文 ====================
 
@@ -196,15 +222,20 @@ class Tracer:
         return span
 
     def end_span(self, span: Span) -> None:
-        """结束 span 并导出"""
+        """结束 span 并入 batcher（：不再单 span 同步 export）。"""
         span.end()
         stack = self._span_stack()
         if stack and stack[-1] is span:
             stack.pop()
         try:
-            self.exporter.export(span)
-        except Exception:
-            pass
+            self._batcher.add(span)
+        except (ValueError, TypeError, RuntimeError) as e:
+            #  收窄：单 span 路径 fail 时 fallback 直接 export
+            logger.debug("batcher.add failed, fallback to direct export: %s", e)
+            try:
+                self.exporter.export(span)
+            except (OSError, ValueError, TypeError):
+                pass
 
     @contextmanager
     def span(self, name: str, attributes: Optional[Dict] = None) -> Iterator[Span]:
@@ -236,6 +267,76 @@ class Tracer:
         """清空导出的 span"""
         if hasattr(self.exporter, "clear"):
             self.exporter.clear()
+
+    def flush(self) -> None:
+        """ C-2：主动 flush batcher（应用关闭 / 关键节点调用）。"""
+        self._batcher.flush()
+
+
+# ----------------SpanBatcher ----------------
+
+
+class SpanBatcher:
+    """Span 缓冲器（按 size 或 time 触发批量 export）。
+
+    Args:
+        exporter: 目标 SpanExporter；优先调 `export_batch(spans)`，fallback 单 span。
+        max_size: 触发批量导出的最大 span 数（默认 50）。
+        window_ms: 触发批量导出的最长时间窗口（默认 1000ms）。
+    """
+
+    def __init__(
+        self,
+        exporter: SpanExporter,
+        max_size: int = 50,
+        window_ms: float = 1000.0,
+    ):
+        self.exporter = exporter
+        self.max_size = max_size
+        self.window_ms = window_ms
+        self._buffer: List[Span] = []
+        self._lock = threading.Lock()
+        self._window_start: Optional[float] = None
+
+    def add(self, span: Span) -> None:
+        """加入 span 到缓冲；触发条件：size ≥ max_size 或 window_ms 到期。"""
+        with self._lock:
+            import time
+            now = time.monotonic()
+            if self._window_start is None:
+                self._window_start = now
+            self._buffer.append(span)
+            elapsed_ms = (now - self._window_start) * 1000.0
+            if len(self._buffer) >= self.max_size or elapsed_ms >= self.window_ms:
+                self._flush_locked()
+
+    def flush(self) -> None:
+        """主动 flush（应用关闭 / 关键节点 / 进程退出时调用）。"""
+        with self._lock:
+            self._flush_locked()
+
+    def _flush_locked(self) -> None:
+        """持锁状态下执行 flush（私有）。"""
+        if not self._buffer:
+            return
+        spans = list(self._buffer)
+        self._buffer.clear()
+        import time
+        self._window_start = None
+        # 优先调 export_batch；fallback 单 span
+        batch_fn = getattr(self.exporter, "export_batch", None)
+        if callable(batch_fn):
+            try:
+                batch_fn(spans)
+                return
+            except (OSError, ValueError, TypeError, AttributeError):
+                # exporter 不支持 batch 或失败，回退逐 span
+                pass
+        for s in spans:
+            try:
+                self.exporter.export(s)
+            except (OSError, ValueError, TypeError):
+                pass
 
 
 # 全局追踪器

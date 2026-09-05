@@ -81,8 +81,38 @@ class ObjectQueryTool(Tool):
                 rs = self.store.search(type_name, parameters.get("query", ""))
                 return ToolResponse.success(text=self._fmt(rs), data={"results": rs})
             elif mode == "filter":
+                #：仅接受 dict[str, Any]（不接受 list/None/其他类型），
+                # 防止 LLM 输出恶意 JSON（如 `{"__class__": ...}`）绕过 schema。
                 import json
-                conds = json.loads(parameters.get("conditions", "{}"))
+                raw_conds = parameters.get("conditions", "{}")
+                # 必须为字符串（LLM 输出约定）
+                if not isinstance(raw_conds, str):
+                    raise ValueError(
+                        f"conditions 必须是 JSON 字符串，实际类型: {type(raw_conds).__name__}"
+                    )
+                try:
+                    conds = json.loads(raw_conds)
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"conditions 不是合法 JSON: {e}") from e
+                # 强制 schema：dict[str, primitive]（仅允许标量/列表/字典 key 是字符串）
+                if not isinstance(conds, dict):
+                    raise ValueError(
+                        f"conditions 必须是 dict（key=string, value=primitive/list/dict），实际: {type(conds).__name__}"
+                    )
+                # 递归校验所有 key 必须是字符串
+                def _validate_keys(obj: Any, path: str = "") -> None:
+                    if isinstance(obj, dict):
+                        for k, v in obj.items():
+                            if not isinstance(k, str):
+                                raise ValueError(
+                                    f"conditions key 必须为字符串（path={path}.{k!r}）"
+                                )
+                            _validate_keys(v, f"{path}.{k}")
+                    elif isinstance(obj, list):
+                        for i, item in enumerate(obj):
+                            _validate_keys(item, f"{path}[{i}]")
+
+                _validate_keys(conds)
                 # 委托 QueryEngine（统一过滤/排序/分页语义）
                 if self.query_engine is not None:
                     rs = self.query_engine.object_set(

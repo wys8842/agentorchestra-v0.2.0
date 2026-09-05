@@ -36,10 +36,48 @@ class PermissionRule:
 
 
 class SecurityManager:
-    """安全管理器"""
+    """安全管理器
 
-    def __init__(self):
+    默认拒绝（deny-by-default）：除非显式添加规则允许，否则所有访问都被拒绝。
+    开发模式可通过 `set_open_mode(True)` 切换为全放行（仅推荐用于本地开发）。
+
+
+    并发出 WARNING 级别日志；未设置环境变量时仅 print 一行警告并要求用户显式确认。
+    """
+
+    def __init__(self, open_mode: bool = False):
+        import os
+        import warnings
         self._rules: List[PermissionRule] = []
+        self._open_mode = open_mode
+        if open_mode:
+            #：显式确认
+            env_confirmed = os.getenv("AGENTORCHESTRA_ALLOW_OPEN_MODE") == "1"
+            if not env_confirmed:
+                warnings.warn(
+                    "SecurityManager.open_mode=True 但未设置环境变量 AGENTORCHESTRA_ALLOW_OPEN_MODE=1。"
+                    "生产环境部署前必须移除此调用或显式设置环境变量。",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+    def set_open_mode(self, open_mode: bool) -> None:
+        """切换为开放模式（仅用于本地原型，**禁止生产环境使用**）。
+
+
+        - 传入 True 时检查环境变量 `AGENTORCHESTRA_ALLOW_OPEN_MODE=1`，未设置则拒绝并 raise
+        - 切换后写 audit log（如已挂 audit）
+        """
+        import os
+        if open_mode:
+            env_confirmed = os.getenv("AGENTORCHESTRA_ALLOW_OPEN_MODE") == "1"
+            if not env_confirmed:
+                raise RuntimeError(
+                    "SecurityManager.set_open_mode(True) 已被拒绝：未设置环境变量 "
+                    "AGENTORCHESTRA_ALLOW_OPEN_MODE=1。生产环境禁止开放模式；"
+                    "本地开发请显式设置环境变量后重试。"
+                )
+        self._open_mode = open_mode
 
     def add_rule(self, rule: PermissionRule) -> None:
         """添加权限规则"""
@@ -50,7 +88,9 @@ class SecurityManager:
         self.add_rule(PermissionRule(resource, action, roles))
 
     def check(self, resource: str, action: str, ctx: SecurityContext) -> bool:
-        """权限检查：无规则 = 开放"""
-        if not self._rules:
+        """权限检查：默认拒绝；显式 open_mode=True 时无规则 = 放行。"""
+        if self._open_mode and not self._rules:
             return True
+        if not self._rules:
+            return False
         return any(rule.allows(resource, action, ctx) for rule in self._rules)

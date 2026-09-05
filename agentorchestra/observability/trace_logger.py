@@ -7,11 +7,21 @@
 
 import json
 import re
+import threading
+from collections import deque
 from datetime import datetime
+from html import escape as html_escape
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agentorchestra.runtime.core.utils import duration_seconds, generate_session_id
+
+
+# 事件上限（防止长会话 OOM）
+_MAX_EVENTS = 50_000
+
+#：JSONL 单文件大小上限（bytes），达到后自动 rotate
+_MAX_JSONL_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
 class TraceLogger:
@@ -22,6 +32,8 @@ class TraceLogger:
     - HTML 增量渲染（实时可查看）
     - 自动脱敏（API Key、路径）
     - 内置统计面板（Token、工具调用、错误）
+    - 线程安全（RLock 保护 _events / 文件 I/O）
+    - bounded events（deque(maxlen=50_000)）
 
     使用示例：
         logger = TraceLogger(output_dir="memory/traces")
@@ -50,9 +62,17 @@ class TraceLogger:
         # 生成会话 ID
         self.session_id = generate_session_id()
 
-        # 事件缓存（用于生成统计和最终 HTML）
-        self._events: List[Dict] = []
+        # 事件缓存（bounded deque 防止 OOM）
+        self._events: deque = deque(maxlen=_MAX_EVENTS)
+        #：单调递增 event counter（与 deque 长度解耦，避免 bounded 弹出后 ID 复用）
+        self._event_counter: int = 0
+        #：deque 溢出告警标记（仅告警一次）
+        self._overflow_warned: bool = False
+        #：JSONL rotate 计数
+        self._jsonl_rotate_index: int = 0
         self._finalized: bool = False
+        #线程安全锁（RLock 允许多次 acquire）
+        self._lock = threading.RLock()
 
         # 确保目录存在
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -78,7 +98,7 @@ class TraceLogger:
         payload: Dict[str, Any],
         step: Optional[int] = None
     ):
-        """记录事件
+        """记录事件（线程安全）
 
         Args:
             event: 事件类型（session_start, tool_call, tool_result, etc.）
@@ -86,31 +106,77 @@ class TraceLogger:
             step: ReAct 循环的步骤序号（可选）
         """
         # 已 finalize 后不再记录（防止多轮 run 写入已关闭文件）
-        if self._finalized:
+        with self._lock:
+            if self._finalized:
+                return
+
+            # 构造事件对象
+            event_obj = {
+                "ts": datetime.now().isoformat(),
+                "session_id": self.session_id,
+                "step": step,
+                "event": event,
+                "payload": payload
+            }
+
+            # 脱敏
+            if self.sanitize:
+                event_obj = self._sanitize_event(event_obj)
+
+            # 追加到缓存（bounded）
+            #：使用单调递增 counter 而非 deque 长度
+            self._event_counter += 1
+            event_obj["event_id"] = self._event_counter
+            self._events.append(event_obj)
+
+            #：deque 溢出时仅告警一次
+            if (
+                len(self._events) >= _MAX_EVENTS
+                and not self._overflow_warned
+            ):
+                import logging
+                logging.getLogger("agentorchestra.trace").warning(
+                    "TraceLogger deque 已满（max=%d），后续事件将覆盖最早事件；"
+                    "JSONL 文件仍完整记录，仅 HTML 渲染与 _compute_stats 受影响。",
+                    _MAX_EVENTS,
+                )
+                self._overflow_warned = True
+
+            # 流式写入 JSONL
+            self.jsonl_file.write(json.dumps(event_obj, ensure_ascii=False) + "\n")
+            self.jsonl_file.flush()
+
+            #：JSONL 单文件过大 → rotate（保持可读 + 控大小）
+            self._maybe_rotate_jsonl()
+
+            # 增量写入 HTML 事件片段
+            self._write_html_event(event_obj)
+
+    def _maybe_rotate_jsonl(self) -> None:
+        """（H-8 v0.1.2 → v0.3）：当 jsonl_path 超过 _MAX_JSONL_BYTES 时关闭当前文件并打开新文件。
+
+        异常处理收窄：仅捕获 OSError（文件 / 路径相关），其他异常向上传播。
+        """
+        try:
+            size = self.jsonl_path.stat().st_size
+        except OSError as e:
+            self.logger.debug("rotate stat failed: %s", e)
             return
-
-        # 构造事件对象
-        event_obj = {
-            "ts": datetime.now().isoformat(),
-            "session_id": self.session_id,
-            "step": step,
-            "event": event,
-            "payload": payload
-        }
-
-        # 脱敏
-        if self.sanitize:
-            event_obj = self._sanitize_event(event_obj)
-
-        # 追加到缓存
-        self._events.append(event_obj)
-
-        # 流式写入 JSONL
-        self.jsonl_file.write(json.dumps(event_obj, ensure_ascii=False) + "\n")
-        self.jsonl_file.flush()
-
-        # 增量写入 HTML 事件片段
-        self._write_html_event(event_obj)
+        if size < _MAX_JSONL_BYTES:
+            return
+        try:
+            self.jsonl_file.flush()
+            self.jsonl_file.close()
+        except OSError as e:
+            self.logger.warning("rotate close failed: %s", e)
+        self._jsonl_rotate_index += 1
+        rotated = self.output_dir / f"trace-{self.session_id}.{self._jsonl_rotate_index}.jsonl"
+        try:
+            self.jsonl_path.rename(rotated)
+        except OSError as e:
+            self.logger.warning("rotate rename failed: %s", e)
+        self.jsonl_path = self.output_dir / f"trace-{self.session_id}.jsonl"
+        self.jsonl_file = open(self.jsonl_path, "w", encoding="utf-8")
 
     def _sanitize_event(self, event: Dict) -> Dict:
         """脱敏敏感信息
@@ -156,30 +222,27 @@ class TraceLogger:
             return value
 
     def finalize(self):
-        """生成最终 HTML 并关闭文件
+        """生成最终 HTML 并关闭文件（线程安全）"""
+        with self._lock:
+            if self._finalized:
+                return
+            self._finalized = True
 
-        步骤：
-        1. 计算统计数据
-        2. 写入 HTML 尾部（包含统计面板）
-        3. 关闭所有文件
-        """
-        if self._finalized:
-            return
-        self._finalized = True
+            # 计算统计数据
+            stats = self._compute_stats()
 
-        # 计算统计数据
-        stats = self._compute_stats()
+            # 写入 HTML 尾部（统计面板 + 脚本）
+            self._write_html_footer(stats)
 
-        # 写入 HTML 尾部（统计面板 + 脚本）
-        self._write_html_footer(stats)
+            # 关闭文件
+            self.jsonl_file.close()
+            self.html_file.close()
 
-        # 关闭文件
-        self.jsonl_file.close()
-        self.html_file.close()
-
-        print("✅ Trace 已保存:")
-        print(f"   JSONL: {self.jsonl_path}")
-        print(f"   HTML:  {self.html_path}")
+        #：移除 emoji print（Windows GBK 控制台会 UnicodeEncodeError）
+        import logging
+        logging.getLogger("agentorchestra.trace").info(
+            "Trace 已保存: JSONL=%s, HTML=%s", self.jsonl_path, self.html_path
+        )
 
     def _compute_stats(self) -> Dict[str, Any]:
         """计算统计数据
@@ -245,7 +308,7 @@ class TraceLogger:
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Trace: {self.session_id}</title>
+    <title>Trace: {html_escape(str(self.session_id))}</title>
     <style>
         body {{
             font-family: 'Consolas', 'Monaco', monospace;
@@ -414,18 +477,21 @@ class TraceLogger:
             css_class += " model-output"
 
         # 生成唯一 ID
-        details_id = f"details-{len(self._events)}"
+        #：使用 event_id 而非 deque 长度（避免 bounded 弹出后冲突）
+        #：原代码引用 `event_obj` 但函数形参是 `event`，
+        # 导致 NameError，HTML 输出100% 失败。改为形参 `event`。
+        details_id = f"details-{event.get('event_id', len(self._events))}"
 
-        # 格式化 payload
-        payload_json = json.dumps(payload, indent=2, ensure_ascii=False)
+        # 格式化 payload（XSS 防护：HTML 转义）
+        payload_json = html_escape(json.dumps(payload, indent=2, ensure_ascii=False))
 
         # 生成事件 HTML
         event_html = f"""
         <div class="{css_class}">
             <div class="event-header">
-                <span class="step">Step {step if step else '-'}</span>
-                <span class="timestamp">{timestamp}</span>
-                <span class="event-type">{event_type}</span>
+                <span class="step">Step {html_escape(str(step)) if step else '-'}</span>
+                <span class="timestamp">{html_escape(str(timestamp))}</span>
+                <span class="event-type">{html_escape(str(event_type))}</span>
                 <span class="expandable" onclick="toggleDetails('{details_id}')">[▼ 详情]</span>
             </div>
             <div id="{details_id}" class="details">
@@ -438,12 +504,12 @@ class TraceLogger:
 
     def _write_html_footer(self, stats: Dict[str, Any]):
         """写入 HTML 尾部（统计面板 + 脚本）"""
-        # 构建工具调用统计表格
+        # 构建工具调用统计表格（XSS 防护：HTML 转义）
         tool_stats_rows = ""
         for tool_name, count in sorted(stats["tool_calls"].items(), key=lambda x: x[1], reverse=True):
-            tool_stats_rows += f"<tr><td>{tool_name}</td><td>{count}</td></tr>\n"
+            tool_stats_rows += f"<tr><td>{html_escape(str(tool_name))}</td><td>{count}</td></tr>\n"
 
-        # 构建错误列表
+        # 构建错误列表（XSS 防护：HTML 转义）
         error_list_html = ""
         if stats["errors"]:
             error_items = ""
@@ -451,7 +517,7 @@ class TraceLogger:
                 step = error.get("step", "?")
                 error_type = error.get("type", "UNKNOWN")
                 message = error.get("message", "")
-                error_items += f"<li>Step {step}: <strong>{error_type}</strong> - {message}</li>\n"
+                error_items += f"<li>Step {html_escape(str(step))}: <strong>{html_escape(str(error_type))}</strong> - {html_escape(str(message))}</li>\n"
             error_list_html = f"""
         <h3>❌ 错误列表 ({len(stats["errors"])})</h3>
         <ul class="error-list">
