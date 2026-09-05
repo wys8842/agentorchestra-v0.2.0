@@ -1,99 +1,100 @@
-# context - 上下文工程
+# Context 模块
 
-管理 Agent 的上下文：历史存储、Token 计量、压缩、上下文构建（GSSC 流水线）。
+## 概述
 
-## 模块组成
+Context 模块提供上下文工程能力：历史管理、Token 计数、上下文构建、截断保护等。
 
-| 文件 | 职责 |
-|------|------|
-| `history.py` | `HistoryManager`：历史消息管理（追加/压缩/序列化） |
-| `token_counter.py` | `TokenCounter`：Token 计数（缓存 + 增量） |
-| `builder.py` | `ContextBuilder`：GSSC 流水线（Gather-Select-Structure-Compress） |
-| `truncator.py` | `ObservationTruncator`：工具输出截断 |
+## 组件
 
-## 1. HistoryManager — 历史管理
+### History
+
+对话历史管理：
 
 ```python
-from agentorchestra.context.history import HistoryManager
+from agentorchestra.runtime.context import History
 
-manager = HistoryManager(min_retain_rounds=10)
-manager.append(Message("你好", "user"))
-manager.append(Message("hi", "assistant"))
-
-history = manager.get_history()      # List[Message]
-manager.compress("前几轮的摘要")       # 压缩旧轮次，保留最近 N 轮
+history = History(max_length=100)
+history.add_message(Message("Hello", "user"))
+history.add_message(Message("Hi", "assistant"))
+messages = history.get_messages()
 ```
 
-**只追加**：append-only，缓存友好（Token 计数可增量）。
+### TokenCounter
 
-## 2. TokenCounter — Token 计量
+Token 计数：
 
 ```python
-from agentorchestra.context.token_counter import TokenCounter
+from agentorchestra.runtime.context import TokenCounter
 
-counter = TokenCounter(model="gpt-4")
-tokens = counter.count_message(msg)      # 单条 + 缓存
-total = counter.count_messages(history)  # 批量
+counter = TokenCounter()
+count = counter.count_messages(messages)
+count = counter.count_tokens("text content")
 ```
 
-**降级链**：tiktoken 编码 → cl100k_base → `len//4` 字符估算。
+### ContextBuilder
 
-## 3. 压缩机制
-
-Agent 的 `add_message()` 触发压缩检查：
-
-```
-_history_token_count > context_window * compression_threshold (128000*0.8)
-    ↓
-_compress_history():
-  简单摘要（统计）或智能摘要（轻量 LLM 提炼）
-    ↓
-HistoryManager.compress() → [summary消息] + 最近 min_retain_rounds 轮
-```
-
-## 4. ContextBuilder — GSSC 流水线
+GSSC 上下文构建器：
 
 ```python
-from agentorchestra.context.builder import ContextBuilder, ContextConfig
+from agentorchestra.runtime.context import ContextBuilder, ContextConfig
 
-builder = ContextBuilder(
-    config=ContextConfig(max_tokens=8000),
-    knowledge_provider=my_knowledge_provider,   # 可选：注入图谱知识
-)
+config = ContextConfig(max_tokens=8000)
+builder = ContextBuilder(config=config)
+
 context = builder.build(
-    user_query="问题",
-    conversation_history=history,
-    system_instructions="系统指令",
+    user_input="问题",
+    history=history,
+    system_prompt="你是一个助手"
 )
 ```
 
-**GSSC 四阶段**：
-- **Gather**：收集候选（系统指令 + 最近历史 + 知识包 + 额外包）
-- **Select**：相关性 + 新近性打分，预算填充
-- **Structure**：组织成 `[Role & Policies]/[Task]/[State]/[Evidence]/[Context]/[Output]`
-- **Compress**：超预算按行截断
+### Truncator
 
-> `ContextBuilder` 目前作为可选能力（`Config.context_builder_enabled=True` 时启用），主链路仍由
-> `HistoryManager` + `TokenCounter` + `ObservationTruncator` 支撑。
-
-## 5. ObservationTruncator — 工具输出截断
+工具输出截断：
 
 ```python
-from agentorchestra.context.truncator import ObservationTruncator
+from agentorchestra.runtime.context import Truncator
 
-truncator = ObservationTruncator(max_lines=2000, truncate_direction="head")
-result = truncator.truncate(tool_name="Read", output=long_text)
-# → {truncated, preview, full_output_path, stats}
+truncator = Truncator(max_lines=2000, max_bytes=51200)
+result = truncator.truncate(tool_name="tool", output=large_text)
 ```
 
-超长工具输出截断进上下文，完整结果保存到 `tool-output/` 文件。
+## 设计原理
 
-## 在 Agent 中的集成
+### 历史压缩
 
-`Agent.__init__` 自动创建三个组件，`add_message()` 串联：
+当历史过长时自动压缩：
 
 ```python
-self.history_manager = HistoryManager(...)
-self.token_counter = TokenCounter(model=llm.model)
-self.truncator = ObservationTruncator(...)
+# 压缩策略
+- 保留系统消息
+- 保留用户首条消息
+- 保留最近 N 轮完整对话
+- 中间消息摘要
+```
+
+### Token 预算
+
+```python
+# 预算分配示例
+总预算: 128000
+├── 系统提示: 2000
+├── 历史消息: 8000
+├── 用户输入: 1000
+└── 预留空间: 117000
+```
+
+### 截断保护
+
+工具输出截断规则：
+
+```python
+# 行数限制
+max_lines: 2000
+
+# 字节限制
+max_bytes: 51200
+
+# 截断方向
+truncate_direction: "head"  # 保留开头
 ```

@@ -1,133 +1,192 @@
-# agents - Agent 范式
+# Agents 模块
 
-五种 Agent 实现，继承 `core/agent.py` 的 `Agent` 基类，通过 `agents/factory.py` 工厂创建。
+## 概述
+
+Agents 模块提供多种 Agent 范式实现，支持不同场景的智能体需求。
 
 ## Agent 类型
 
-| Agent | 范式 | 特点 |
-|-------|------|------|
-| `SimpleAgent` | 简单对话 | 直接调用 LLM，可选工具调用 |
-| `ReActAgent` | 推理-行动 | Thought/Finish 伪工具 + Function Calling，工具循环 |
-| `ReflectionAgent` | 反思迭代 | 生成→反思→优化循环（Self-Refine） |
-| `PlanSolveAgent` | 规划-执行 | Planner 生成计划 → Executor 逐步执行 |
-| `LoopAgent` | 循环执行 | 通用 Function Calling 循环（无预设推理模板） |
+### SimpleAgent
 
-> 所有 Agent 都提供同步 `run()` 与异步 `arun()`；`LoopAgent` 亦可作为通用多轮工具交互替代方案。
-
-## 创建与使用
-
-### 1. SimpleAgent
+简单问答 Agent，适用于基础对话场景。
 
 ```python
-from agentorchestra.agents.simple_agent import SimpleAgent
+from agentorchestra.runtime.agents import SimpleAgent
 
-agent = SimpleAgent(
-    name="assistant",
-    llm=llm,
-    system_prompt="你是助手",
-    tool_registry=registry,        # 可选，提供则启用工具调用
-)
+agent = SimpleAgent(name="Assistant", llm=llm)
 result = agent.run("你好")
 ```
 
-### 2. ReActAgent（最完整的工具型 Agent）
+### ReActAgent
+
+ReAct 范式 Agent，通过循环调用工具实现复杂任务。
 
 ```python
-from agentorchestra.agents.react_agent import ReActAgent
+from agentorchestra.runtime.agents import ReActAgent
 
 agent = ReActAgent(
-    name="react",
+    name="Assistant",
     llm=llm,
     tool_registry=registry,
-    max_steps=10,
+    max_steps=10
 )
-result = agent.run("帮我分析项目架构")
+result = agent.run("帮我查天气")
 ```
 
-**执行流程**：LLM Function Calling → 工具调用循环 → Finish 收尾：
+### ReflectionAgent
 
-```
-Thought(记录推理) → Action(调用工具) → 观察结果 → ... → Finish(最终答案)
-```
-
-**内置伪工具**：
-- `Thought`：显式记录推理（`_handle_builtin_tool` 处理）
-- `Finish`：返回最终答案并终止
-
-### 3. ReflectionAgent
+反思 Agent，通过迭代改进答案质量。
 
 ```python
-from agentorchestra.agents.reflection_agent import ReflectionAgent
+from agentorchestra.runtime.agents import ReflectionAgent
 
-agent = ReflectionAgent(
-    name="reflector",
-    llm=llm,
-    max_steps=3,        # 最大反思迭代次数
-    tool_registry=registry,   # 可选：反思过程中也支持工具调用
-)
-result = agent.run("写一个高质量方案")
+agent = ReflectionAgent(name="Reflector", llm=llm)
+result = agent.run("分析这个问题")
 ```
 
-**流程**：执行任务 → 反思结果 → 优化改进 → 循环。
+### PlanSolveAgent
 
-### 4. PlanSolveAgent
+计划-执行范式，先规划后执行。
 
 ```python
-from agentorchestra.agents.plan_solve_agent import PlanSolveAgent
+from agentorchestra.runtime.agents import PlanSolveAgent
 
-agent = PlanSolveAgent(name="planner", llm=llm, tool_registry=registry)
-result = agent.run("实现一个推荐系统")
+agent = PlanSolveAgent(name="Planner", llm=llm)
+result = agent.run("完成这个复杂任务")
 ```
 
-**流程**：Planner 生成步骤计划 → Executor 按计划逐步执行。
+### LoopAgent
 
-### 5. LoopAgent
+闭环认知 Agent，实现 Plan→Act→Observe→Reflect→Check→Replan 完整认知流程。
 
 ```python
-from agentorchestra.agents.loop_agent import LoopAgent
+from agentorchestra.runtime.agents import LoopAgent
 
+# 简单模式（向后兼容）
+agent = LoopAgent(name="Assistant", llm=llm)
+
+# 完整模式（启用认知闭环）
 agent = LoopAgent(
-    name="loop",
+    name="Assistant",
     llm=llm,
-    tool_registry=registry,
-    max_steps=5,        # 最大循环迭代次数
+    enable_reflection=True,   # 启用反思
+    enable_replan=True,    # 启用再规划
+    max_steps=10,
+    max_replans=3,
+    max_consecutive_errors=3,
+    stuck_threshold=2
 )
-result = agent.run("帮我多轮查询并汇总结果")
 ```
 
-**流程**：LLM Function Calling → 执行工具 → 结果反馈 → 继续循环，直到无工具调用或达到 `max_steps`。
+## 核心数据类
 
-## 工厂创建
+### LoopState
+
+循环状态管理：
 
 ```python
-from agentorchestra.agents.factory import create_agent, default_subagent_factory
+from agentorchestra.runtime.agents.loop_agent import LoopState, LoopStatus, Budget
 
-agent = create_agent(
-    agent_type="react",   # react/reflection/plan/simple/loop
-    name="sub",
-    llm=llm,
-    tool_registry=registry,
+state = LoopState(
+    goal="用户目标",
+    plan=Plan(),
+    budget=Budget(max_steps=10, max_replans=3),
+    status=LoopStatus.RUNNING
 )
 ```
 
-> `agents/__init__.py` 另导出 `PlanAndSolveAgent`（`PlanSolveAgent` 向后兼容别名）。
+### Plan
 
-## 子代理机制
-
-`Agent.run_as_subagent()` 提供上下文隔离：
+结构化计划：
 
 ```python
-result = subagent.run_as_subagent(
-    task="探索代码库",
-    tool_filter=ReadOnlyFilter(),   # 限制工具
-    return_summary=True,            # 返回摘要
+from agentorchestra.runtime.agents.loop_agent import Plan
+
+plan = Plan(
+    steps=["步骤1", "步骤2"],
+    current_step=0,
+    success_criteria=["标准1", "标准2"]
 )
 ```
 
-子代理是**全新实例**（独立 HistoryManager/TokenCounter），执行后主代理状态自动恢复，只返回摘要。
+### Evidence
 
-## 异步与流式
+工具执行证据：
 
-所有 Agent 支持：
-- `arun()` — 异步执行（带生命周期钩子）
-- `arun_stream()` — 流式执行（StreamEvent 逐块输出）
+```python
+from agentorchestra.runtime.agents.loop_agent import Evidence
+
+evidence = Evidence(
+    tool_name="tool_name",
+    tool_call_id="call_123",
+    status="success",
+    summary="结果摘要"
+)
+```
+
+### Reflection
+
+反思结果：
+
+```python
+from agentorchestra.runtime.agents.loop_agent import Reflection
+
+reflection = Reflection(
+    progress=0.5,
+    issues=["问题1"],
+    should_replan=False
+)
+```
+
+### TerminationDecision
+
+终止决策：
+
+```python
+from agentorchestra.runtime.agents.loop_agent import TerminationDecision
+
+decision = TerminationDecision(
+    signal="completed",  # completed/stuck/errors/budget/no_progress/terminate_tool
+    action="stop",     # stop/replan/continue
+    reason="任务完成"
+)
+```
+
+## 执行模式
+
+### 同步执行
+
+```python
+result = agent.run("问题")
+```
+
+### 异步执行
+
+```python
+result = await agent.arun("问题")
+```
+
+### 流式执行
+
+```python
+for chunk in agent.stream_run("问题"):
+    print(chunk, end="")
+```
+
+### 异步流式
+
+```python
+async for event in agent.arun_stream("问题"):
+    print(event)
+```
+
+## 终止信号
+
+| 信号 | 触发条件 | 动作 |
+|------|----------|------|
+| terminate_tool | 模型调用 terminate 工具 | stop |
+| completed | 业务目标达成 | stop |
+| budget | 达到 max_steps | stop |
+| errors | 连续错误超限 | stop |
+| stuck | 连续重复调用 | replan |
+| no_progress | 无工具调用且有证据 | stop |

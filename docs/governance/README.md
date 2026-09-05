@@ -1,66 +1,105 @@
-# governance — 对象身份与权限（P3 / M3）
+# Governance 模块
 
-Ontology 对象带版本号与事务身份；权限 = RBAC + 对象 ACL 在事务 pre-condition 求值；审计走 WORM。
+## 概述
 
-设计见 [M3 spec](../superpowers/specs/2026-09-04-m3-object-identity-acl-design.md)。
+Governance 模块提供企业级治理能力：权限/审计/身份/ACL。
 
-## 模块组成
+## 子模块
 
-| 文件 | 职责 |
-|------|------|
-| `identity.py` | `IdentityService`：principal + roles 上下文（ContextVar） |
-| `acl.py` | `ACLManager` / `ACLRule`：对象级（行级）权限，支持通配 `order:*` |
-| `permission.py` | `PermissionChecker`（RBAC → ACL 两段决策）+ `PermissionDenied` |
-| `cas.py` | `ObjectCAS`：对象 version/created_tx/last_modified_tx 读写 |
+### Identity
 
-## 对象身份（ObjectStore 自动）
-
-`ObjectStore` insert/update/delete 自动注入/维护系统字段：
-
-```
-version            # 从 1 递增（update CAS 依据）
-created_tx         # 创建时事务 id
-last_modified_tx   # 最后修改事务 id
-```
-
-- `ObjectType.SYSTEM_FIELDS` 常量；`validate_object` / `unknown_properties` 豁免（不报未声明）
-- `store.update(..., expected_version=n)` → 版本不匹配抛 `TxConflict`
+身份管理：
 
 ```python
-store.insert("Order", {"id": "o1", "amount": 100})
-# 返回 obj 含 version=1 / created_tx="none" / last_modified_tx="none"
+from agentorchestration.governance.govern import Identity
 
-obj = store.update("Order", "o1", {"amount": 150}, expected_version=1)  # CAS
+identity = Identity()
+identity.create("user-1", {"name": "张三"})
 ```
 
-## 权限决策
+### ACL
+
+访问控制：
 
 ```python
-from agentorchestra.governance import (
-    IdentityService, ACLManager, PermissionChecker, PermissionDenied,
-)
+from agentorchestration.governance.govern import ACL
 
-acl = ACLManager()
-acl.grant("order:o1", "write", principal="alice")
-checker = PermissionChecker(security=security_manager, acl=acl)
-
-checker.check("order", "write", principal="alice", roles=[], obj_id="o1")  # ok
-checker.check("order", "write", principal="bob", obj_id="o1")  # PermissionDenied
+acl = ACL()
+acl.grant("user-1", "resource", "read")
+allowed = acl.check("user-1", "resource", "read")
 ```
 
-决策顺序：**RBAC 先行**（SecurityManager，角色→资源/动作）→ **ACL 行级**（有 obj_id 时）。
-- SecurityManager 无规则 → RBAC 默认开放（向后兼容）
-- ACL 是白名单：无 ACL 规则匹配 → 拒绝（除非未装配 ACL）
+### Permission
 
-## coordinator 集成
+权限：
 
 ```python
-async with coord.transaction(principal="alice", roles=["admin"]) as tx:
-    tx.authorize("order", "write", obj_id="o1")   # 拒绝 → PermissionDenied → 自动回滚
+from agentorchestration.governance.govern import Permission
+
+perm = Permission("action", "resource")
+perm.add_constraint("tenant=tenant-1")
 ```
 
-事务进入时经 IdentityService ContextVar 注入身份（退出还原），供审计/ACL 自动读取。
+### CAS
 
-## 审计（WORM）
+CAS 操作：
 
-`CheckpointStore` 新增 `audit_log` 表：仅 `append_audit` / `query_audit`，**无 update/delete/clear 公开方法**（接口层 WORM）。`AuditManager.attach_backend(store)` 后写操作自动 append；配 backend 后 `clear()` 只清内存不删 DB 行。
+```python
+from agentorchestration.governance.govern import CAS
+
+cas = CAS(store)
+ok = await cas.compare_and_swap("key", expected=1, new=2)
+```
+
+## WORM 审计
+
+### Audit
+
+审计日志：
+
+```python
+from agentorchestration.governance.govern import AuditLogger
+
+logger = AuditLogger(store)
+logger.log(action="read", principal="user-1", resource="doc-1")
+entries = logger.query(principal="user-1")
+```
+
+## Tenancy 多租户
+
+### TenantContext
+
+租户上下文：
+
+```python
+from agentorchestration.governance.tenancy import TenantContext
+
+ctx = TenantContext(tenant_id="tenant-1")
+with ctx:
+    # 在租户上下文中执行
+    pass
+```
+
+### Quota
+
+配额管理：
+
+```python
+from agentorchestration.governance.tenancy import QuotaManager
+
+manager = QuotaManager()
+manager.set_limit("tenant-1", "tokens", 100000)
+usage = manager.get_usage("tenant-1", "tokens")
+```
+
+### Billing
+
+计费：
+
+```python
+from agentorchestration.governance.tenancy import Billing
+
+billing = Billing()
+billing.record_usage("tenant-1", "tokens", 1000)
+invoice = billing.get_invoice("tenant-1")
+```
