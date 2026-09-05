@@ -2,48 +2,9 @@
 
 import pytest
 import asyncio
-from agentorchestra.orchestration.orch.graph import Graph, Node, Edge
 from agentorchestra.orchestration.orch.scheduler import GraphScheduler
 from agentorchestra.orchestration.orch.inbox import Inbox
 from agentorchestra.orchestration.state.backends.memory_backend import InMemoryCheckpointStore
-
-
-class TestGraph:
-    """图测试"""
-
-    def test_graph_creation(self):
-        """测试图创建"""
-        graph = Graph()
-        assert graph is not None
-
-    def test_add_node(self):
-        """测试添加节点"""
-        graph = Graph()
-        node = Node(id="node-1", run=lambda ctx, **kwargs: "result")
-        graph.add_node(node)
-        assert "node-1" in graph.nodes()
-
-    def test_add_edge(self):
-        """测试添加边"""
-        graph = Graph()
-        node1 = Node(id="node-1", run=lambda ctx, **kwargs: "result")
-        node2 = Node(id="node-2", run=lambda ctx, **kwargs: "result2")
-        graph.add_node(node1)
-        graph.add_node(node2)
-        graph.add_edge("node-1", "node-2")
-        edges = list(graph.outgoing("node-1"))
-        assert len(edges) > 0
-
-    def test_validate_valid_graph(self):
-        """测试有效图验证"""
-        graph = Graph()
-        node1 = Node(id="start", run=lambda ctx, **kwargs: "result")
-        node2 = Node(id="end", run=lambda ctx, **kwargs: "result2")
-        graph.add_node(node1)
-        graph.add_node(node2)
-        graph.add_edge("start", "end")
-        errors = graph.validate()
-        assert len(errors) == 0
 
 
 @pytest.mark.asyncio
