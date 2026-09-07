@@ -5,17 +5,16 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional
 
-from .config import Config
-from .lifecycle import AgentEvent, EventType, LifecycleHook
-from .llm import SymphonyLLM
-from .logging import get_logger
-from .message import Message
-from .utils import duration_seconds, generate_session_id, truncate_text
+from agentorchestra.runtime.core.agent.lifecycle import AgentEvent, EventType, LifecycleHook
+from agentorchestra.runtime.core.config import Config
+from agentorchestra.runtime.core.llm import SymphonyLLM
+from agentorchestra.runtime.core.message import Message
+from agentorchestra.runtime.core.telemetry.logging import get_logger
+from agentorchestra.runtime.core.utils import duration_seconds, truncate_text
 
 if TYPE_CHECKING:
     from agentorchestra.capability.tools.registry import ToolRegistry
     from agentorchestra.capability.tools.tool_filter import BaseToolFilter
-    from agentorchestra.orchestration.state.checkpoint import CheckpointStore
 
 
 class Agent(ABC):
@@ -72,7 +71,7 @@ class Agent(ABC):
         )
 
         #Token 计数器（缓存 + 增量计算）
-        from ..context.token_counter import TokenCounter
+        from agentorchestra.runtime.context.token_counter import TokenCounter
         model_name = self.llm.model
         if model_name is None:
             model_name = "unknown"
@@ -84,7 +83,7 @@ class Agent(ABC):
         self.context_builder: Optional[Any] = None
         if self.config.context_builder_enabled:
             try:
-                from ..context.builder import ContextBuilder, ContextConfig
+                from agentorchestra.runtime.context.builder import ContextBuilder, ContextConfig
                 self.context_builder = ContextBuilder(
                     config=ContextConfig(max_tokens=self.config.context_builder_max_tokens)
                 )
@@ -439,6 +438,20 @@ class Agent(ABC):
         """
         self.history_manager.append(message)
 
+        # 增量更新 Token 计数
+        new_tokens = self.token_counter.count_message(message)
+        self._history_token_count += new_tokens
+
+        # 检查是否需要压缩
+        if self._should_compress():
+            self._compress_history()
+
+        # 自动保存（如果启用）
+        if self.config.auto_save_enabled and self.session_store:
+            history_len = len(self.history_manager.get_history())
+            if history_len % self.config.auto_save_interval == 0:
+                self._auto_save()
+
     def _register_config_callback(self) -> None:
         """注册配置变更回调（自动响应）"""
         try:
@@ -457,20 +470,6 @@ class Agent(ABC):
             Components.on_config_change(_on_config_change)
         except ImportError:
             pass
-
-        # 增量更新 Token 计数
-        new_tokens = self.token_counter.count_message(message)
-        self._history_token_count += new_tokens
-
-        # 检查是否需要压缩
-        if self._should_compress():
-            self._compress_history()
-
-        # 自动保存（如果启用）
-        if self.config.auto_save_enabled and self.session_store:
-            history_len = len(self.history_manager.get_history())
-            if history_len % self.config.auto_save_interval == 0:
-                self._auto_save()
 
     def clear_history(self):
         """清空历史记录"""
@@ -633,7 +632,7 @@ class Agent(ABC):
             SymphonyLLM 实例
         """
         if not hasattr(self, '_summary_llm'):
-            from ..core.llm import SymphonyLLM
+            from agentorchestra.runtime.core.llm import SymphonyLLM
 
             # 使用配置中的轻量模型
             provider = self.config.summary_llm_provider
@@ -1025,7 +1024,7 @@ class Agent(ABC):
                 self.logger.warning(f"  建议：{tool_check['recommendation']}")
 
         # 恢复历史
-        from .message import Message
+        from agentorchestra.runtime.core.message import Message
         self.history_manager.clear()
         for msg_data in session_data.get("history", []):
             self.history_manager.append(Message.from_dict(msg_data))

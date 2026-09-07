@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from .base import Capability, CapabilityContext
-
 
 # ---------------- Trace ----------------
 
@@ -107,9 +106,9 @@ class OntologyCapability(Capability):
                 engine = module.build_engine()
             else:
                 from agentorchestra.ontology.storage.backends import (
+                    BaseStorageBackend,
                     MemoryBackend,
                     SQLiteBackend,
-                    BaseStorageBackend,
                 )
                 from agentorchestra.ontology.storage.graph_store import GraphStore
                 from agentorchestra.ontology.storage.object_store import ObjectStore
@@ -147,7 +146,7 @@ class SessionCapability(Capability):
         return bool(ctx.config.session.enabled)
 
     def install(self, ctx: CapabilityContext) -> None:
-        from agentorchestra.runtime.core.session_store import SessionStore
+        from agentorchestra.runtime.core.message.session import SessionStore
 
         store = SessionStore(session_dir=ctx.config.session.dir)
         ctx.state["session_store"] = store
@@ -257,8 +256,8 @@ class DevLogCapability(Capability):
         return bool(ctx.config.devlog.enabled) and ctx.tool_registry is not None
 
     def install(self, ctx: CapabilityContext) -> None:
-        from agentorchestra.runtime.core.utils import generate_session_id
         from agentorchestra.capability.tools.builtin.devlog_tool import DevLogTool
+        from agentorchestra.runtime.core.utils import generate_session_id
 
         session_id = (
             ctx.state.get("trace_logger")
@@ -314,7 +313,10 @@ class StateCheckpointCapability(Capability):
 
             # 后台 snapshot worker（可选）
             if ctx.config.state_checkpoint.wal_snapshot_enabled:
-                from agentorchestra.orchestration.state.snapshot import SnapshotPolicy, SnapshotWorker
+                from agentorchestra.orchestration.state.snapshot import (
+                    SnapshotPolicy,
+                    SnapshotWorker,
+                )
                 ctx.state["snapshot_worker"] = SnapshotWorker(
                     store=store,
                     policy=SnapshotPolicy(

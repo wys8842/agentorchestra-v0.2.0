@@ -10,10 +10,9 @@ roadmap §8.2『tenant_id（粗粒度）+ namespace（细粒度）』。
 from __future__ import annotations
 
 import contextvars
-import functools
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Callable, Iterator, Optional
+from typing import AsyncIterator, Iterator, Optional
 
 
 @dataclass(frozen=True)

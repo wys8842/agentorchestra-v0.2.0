@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     )
     from ..snapshot import Snapshot
     from ..wal import WALEntry
-    from .interrupt import Interrupt
     from .checkpoint import Checkpoint
+    from .interrupt import Interrupt
 
 
 class ThreadStore(ABC):

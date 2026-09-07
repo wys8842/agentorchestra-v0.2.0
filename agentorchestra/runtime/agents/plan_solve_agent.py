@@ -8,13 +8,13 @@ _map_parameter_type / _execute_tool_call），消除 ~150 行重复代码；保�
 import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, cast
 
-from ..core.agent import Agent
-from ..core.config import Config
-from ..core.lifecycle import LifecycleHook
-from ..core.llm import SymphonyLLM
-from ..core.message import Message
-from ..core.streaming import StreamEvent, StreamEventType
-from ..core.utils import parse_tool_arguments, serialize_tool_calls
+from agentorchestra.runtime.core.agent import Agent
+from agentorchestra.runtime.core.agent.lifecycle import LifecycleHook
+from agentorchestra.runtime.core.config import Config
+from agentorchestra.runtime.core.llm import SymphonyLLM
+from agentorchestra.runtime.core.llm.streaming import StreamEvent, StreamEventType
+from agentorchestra.runtime.core.message import Message
+from agentorchestra.runtime.core.utils import parse_tool_arguments, serialize_tool_calls
 
 if TYPE_CHECKING:
     from agentorchestra.capability.tools.registry import ToolRegistry

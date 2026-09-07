@@ -7,7 +7,7 @@ import functools
 import time
 from typing import Any, Callable, Optional, Tuple, Type
 
-from .exceptions import SymphonyException
+from agentorchestra.runtime.core.exceptions import SymphonyException
 
 
 def retry_with_backoff(

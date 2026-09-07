@@ -27,13 +27,13 @@ import time
 # ============ Runtime Core ============
 from agentorchestra.runtime.core.config import Config
 from agentorchestra.runtime.core.message import Message
-from agentorchestra.runtime.core.logging import get_logger, setup_logging
-from agentorchestra.runtime.core.metrics import get_metrics
-from agentorchestra.runtime.core.tracing import get_tracer, MemoryExporter
-from agentorchestra.runtime.core.ratelimit import RateLimiter
-from agentorchestra.runtime.core.retry import retry_with_backoff
-from agentorchestra.runtime.core.health import HealthCheck
-from agentorchestra.runtime.core.monitor import MonitorServer
+from agentorchestra.runtime.core.telemetry.logging import get_logger, setup_logging
+from agentorchestra.runtime.core.telemetry.metrics import get_metrics
+from agentorchestra.runtime.core.telemetry.tracing import get_tracer, MemoryExporter
+from agentorchestra.runtime.core.reliability.ratelimit import RateLimiter
+from agentorchestra.runtime.core.reliability.retry import retry_with_backoff
+from agentorchestra.runtime.core.telemetry.health import HealthCheck
+from agentorchestra.runtime.core.telemetry.monitor import MonitorServer
 
 # ============ Agents ============
 from agentorchestra.runtime.agents.simple_agent import SimpleAgent

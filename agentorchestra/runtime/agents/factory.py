@@ -5,9 +5,9 @@
 
 from typing import TYPE_CHECKING, Optional
 
-from ..core.agent import Agent
-from ..core.config import Config
-from ..core.llm import SymphonyLLM
+from agentorchestra.runtime.core.agent import Agent
+from agentorchestra.runtime.core.config import Config
+from agentorchestra.runtime.core.llm import SymphonyLLM
 
 if TYPE_CHECKING:
     from agentorchestra.capability.tools.registry import ToolRegistry

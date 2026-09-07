@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 
 import tiktoken
 
-from ..core.message import Message
+from agentorchestra.runtime.core.message import Message
 
 
 class TokenCounter:

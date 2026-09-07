@@ -10,7 +10,7 @@
 from datetime import datetime
 from typing import Any, Dict, List
 
-from ..core.message import Message
+from agentorchestra.runtime.core.message import Message
 
 
 class HistoryManager:

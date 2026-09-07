@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Dict, Optional, Set
 
 
 class BarrierTimeoutMode(Enum):

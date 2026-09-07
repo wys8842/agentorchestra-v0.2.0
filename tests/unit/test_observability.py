@@ -26,5 +26,5 @@ class TestSpan:
 
     def test_span_class_exists(self):
         """测试 Span 类存在"""
-        from agentorchestra.runtime.core.tracing import Span
+        from agentorchestra.runtime.core.telemetry.tracing import Span
         assert Span is not None

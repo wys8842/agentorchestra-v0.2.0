@@ -98,7 +98,7 @@ class ActionType:
 
         # 观测埋点：动作指标
         try:
-            from agentorchestra.runtime.core.metrics import get_metrics
+            from agentorchestra.runtime.core.telemetry.metrics import get_metrics
             get_metrics().record_action_execution(self.api_name, error=bool(errors))
         except Exception:
             pass

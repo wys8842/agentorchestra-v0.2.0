@@ -46,7 +46,7 @@ class InMemoryCheckpointStore(CheckpointStore):
         #独立维护 per-resource 单调递增 version 计数器（乐观并发关键）
         self._lock_versions: Dict[str, int] = {}
         #fencing token 单调递增（全局 + resource_key 双维度）
-        self._fencing_token: int = 0    
+        self._fencing_token: int = 0
         #DLQ id 自增计数器
         self._dlq_next_id: int = 1
         self._idempotency: Dict[str, IdempotencyRecord] = {}

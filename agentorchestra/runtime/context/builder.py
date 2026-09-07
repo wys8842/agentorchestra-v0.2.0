@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import tiktoken
 
-from ..core.message import Message
+from agentorchestra.runtime.core.message import Message
 
 logger = logging.getLogger(__name__)
 

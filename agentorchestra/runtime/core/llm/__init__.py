@@ -4,9 +4,9 @@ import asyncio
 import os
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
-from .exceptions import SymphonyException
-from .llm_adapters import BaseLLMAdapter, create_adapter
-from .llm_response import LLMResponse
+from agentorchestra.runtime.core.exceptions import SymphonyException
+from agentorchestra.runtime.core.llm.adapters import BaseLLMAdapter, create_adapter
+from agentorchestra.runtime.core.llm.response import LLMResponse
 
 
 class SymphonyLLM:
@@ -65,7 +65,7 @@ class SymphonyLLM:
         self.kwargs = kwargs
 
         # 重试机制
-        from .retry import RetryManager
+        from agentorchestra.runtime.core.reliability.retry import RetryManager
         self.retry_manager = RetryManager(
             max_retries=max_retries,
             base_delay=retry_base_delay,
@@ -99,9 +99,9 @@ class SymphonyLLM:
         self.last_call_stats: Optional[LLMResponse] = None
 
         # 可观测性：日志 + 指标
-        from .logging import get_logger
-        from .metrics import get_metrics
-        from .tracing import get_tracer
+        from agentorchestra.runtime.core.telemetry.logging import get_logger
+        from agentorchestra.runtime.core.telemetry.metrics import get_metrics
+        from agentorchestra.runtime.core.telemetry.tracing import get_tracer
         self.logger = get_logger("core.llm")
         self.metrics = get_metrics()
         self.tracer = get_tracer()

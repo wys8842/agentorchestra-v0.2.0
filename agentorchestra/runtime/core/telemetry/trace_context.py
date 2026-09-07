@@ -13,7 +13,7 @@ import re
 import secrets
 import threading
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 # W3C TraceContext 规范
 TRACEPARENT_FORMAT = "00-{trace_id}-{parent_id}-{flags}"

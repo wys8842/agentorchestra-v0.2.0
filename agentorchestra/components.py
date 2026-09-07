@@ -97,7 +97,7 @@ class _Components:
         with self._lock:
             if self._tracer is not None:
                 return self._tracer()
-        from agentorchestra.runtime.core.tracing import get_tracer
+        from agentorchestra.runtime.core.telemetry.tracing import get_tracer
         return get_tracer()
 
     # ---------------- 装配组合 ----------------
@@ -119,7 +119,7 @@ class _Components:
         with self._lock:
             self._otel_exporter = lambda: exporter
         # 接入全局 Tracer
-        from agentorchestra.runtime.core.tracing import get_tracer
+        from agentorchestra.runtime.core.telemetry.tracing import get_tracer
         get_tracer(exporter=exporter)
         return exporter
 
@@ -192,7 +192,7 @@ class _Components:
         Returns:
             ConfigWatch 实例
         """
-        from agentorchestra.runtime.core.hot_config import ConfigWatch
+        from agentorchestra.runtime.core.config.hot import ConfigWatch
 
         if config_cls is None:
             from agentorchestra.runtime.core.config import Config
@@ -207,7 +207,7 @@ class _Components:
 
     def stop_hot_reload(self) -> None:
         """停止配置热更新"""
-        from agentorchestra.runtime.core.hot_config import (
+        from agentorchestra.runtime.core.config.hot import (
             stop_global_hot_reload,
         )
         stop_global_hot_reload()

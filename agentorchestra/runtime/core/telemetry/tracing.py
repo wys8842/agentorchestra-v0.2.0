@@ -19,6 +19,10 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional
 
+from .logging import get_logger
+
+logger = get_logger("agentorchestra.runtime.core.telemetry.tracing")
+
 
 class Span:
     """追踪跨度（一次操作的时间段）"""
@@ -321,7 +325,6 @@ class SpanBatcher:
             return
         spans = list(self._buffer)
         self._buffer.clear()
-        import time
         self._window_start = None
         # 优先调 export_batch；fallback 单 span
         batch_fn = getattr(self.exporter, "export_batch", None)

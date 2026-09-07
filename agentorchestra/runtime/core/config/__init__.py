@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-
 # 模块级常量（避免 Pydantic BaseModel 清理类级 dict）
 _LEGACY_FIELD_MAP: Dict[str, tuple] = {
     "default_model": ("llm", "default_model"),
@@ -335,18 +334,18 @@ class Config(BaseModel):
     @classmethod
     def from_env(cls, env_prefix: str = "") -> "Config":
         """从环境变量创建配置（兼容旧 API；环境变量按 SYMPHONY_<SUB>_<FIELD> 解析）。"""
-        from .config_loader import ConfigLoader
+        from agentorchestra.runtime.core.config.loader import ConfigLoader
         return cls(**ConfigLoader.from_env(env_prefix))
 
     @classmethod
     def from_file(cls, path: str) -> "Config":
         """从 JSON 配置文件创建配置。"""
-        from .config_loader import ConfigLoader
+        from agentorchestra.runtime.core.config.loader import ConfigLoader
         return cls(**ConfigLoader.from_file(path))
 
     def sanitized_dict(self) -> Dict[str, Any]:
         """返回脱敏后的配置字典（密钥替换为 ***）。"""
-        from .config_loader import ConfigLoader
+        from agentorchestra.runtime.core.config.loader import ConfigLoader
         return ConfigLoader.sanitize(self.model_dump())
 
     def to_dict(self) -> Dict[str, Any]:

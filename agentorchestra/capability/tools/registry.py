@@ -236,7 +236,7 @@ class ToolRegistry:
         """结束追踪 span"""
         try:
             if span is not None:
-                from agentorchestra.runtime.core.tracing import get_tracer
+                from agentorchestra.runtime.core.telemetry.tracing import get_tracer
                 if error:
                     span.set_error()
                 span.set_attribute("status", "error" if error else "ok")
@@ -251,7 +251,7 @@ class ToolRegistry:
 
         # 指标埋点
         try:
-            from agentorchestra.runtime.core.metrics import get_metrics
+            from agentorchestra.runtime.core.telemetry.metrics import get_metrics
             metrics = get_metrics()
             metrics.record_tool_call(name, error=_is_error_response(response))
         except Exception:
@@ -260,7 +260,7 @@ class ToolRegistry:
     def _start_trace(self, name: str):
         """启动追踪 span"""
         try:
-            from agentorchestra.runtime.core.tracing import get_tracer
+            from agentorchestra.runtime.core.telemetry.tracing import get_tracer
             return get_tracer().start_span(f"tool.{name}", {"tool": name})
         except Exception:
             return None

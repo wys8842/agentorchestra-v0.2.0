@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Optional
 
 from agentorchestra.runtime.core.utils import duration_seconds, generate_session_id
 
-
 # 事件上限（防止长会话 OOM）
 _MAX_EVENTS = 50_000
 

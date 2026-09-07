@@ -194,7 +194,7 @@ class MemoryManager:
                 self._save_with_embedding(old)
                 return old.id
 
-       
+
         self._save_with_embedding(entry)
         return entry.id
 

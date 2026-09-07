@@ -50,6 +50,29 @@ _LEGACY_TOP = {
 _GOVERN_FLAT = {"acl", "cas", "identity", "permission"}
 _ORCH_FLAT = {"delivery", "events", "graph", "inbox", "migration", "nodes", "scheduler"}
 
+# runtime.core 按职责分组后，被移动/合并进子包的经典模块 -> 新物理模块。
+# 未列出的（agent/config/llm/message/exceptions/utils）仍由 _LEGACY_TOP 的
+# core->runtime.core 前缀规则命中（这些名字作为子包保留，路径不变）。
+_LEGACY_CORE = {
+    "lifecycle": "agentorchestra.runtime.core.agent.lifecycle",
+    "config_loader": "agentorchestra.runtime.core.config.loader",
+    "hot_config": "agentorchestra.runtime.core.config.hot",
+    "llm_adapters": "agentorchestra.runtime.core.llm.adapters",
+    "llm_response": "agentorchestra.runtime.core.llm.response",
+    "llm_schema": "agentorchestra.runtime.core.llm.schema",
+    "streaming": "agentorchestra.runtime.core.llm.streaming",
+    "prompt_guard": "agentorchestra.runtime.core.llm.guard",
+    "session_store": "agentorchestra.runtime.core.message.session",
+    "retry": "agentorchestra.runtime.core.reliability.retry",
+    "ratelimit": "agentorchestra.runtime.core.reliability.ratelimit",
+    "logging": "agentorchestra.runtime.core.telemetry.logging",
+    "metrics": "agentorchestra.runtime.core.telemetry.metrics",
+    "monitor": "agentorchestra.runtime.core.telemetry.monitor",
+    "health": "agentorchestra.runtime.core.telemetry.health",
+    "tracing": "agentorchestra.runtime.core.telemetry.tracing",
+    "trace_context": "agentorchestra.runtime.core.telemetry.trace_context",
+}
+
 
 def _guess(fullname: str) -> Optional[str]:
     """返回 fullname 的规范（新物理）模块名；无映射返回 None。"""
@@ -59,6 +82,8 @@ def _guess(fullname: str) -> Optional[str]:
     segs = tail.split(".")
     top = segs[0]
     rest = segs[1:]
+    if top == "core" and len(rest) == 1 and rest[0] in _LEGACY_CORE:
+        return _LEGACY_CORE[rest[0]]
     if top in _LEGACY_TOP:
         target = _LEGACY_TOP[top]
         if rest:

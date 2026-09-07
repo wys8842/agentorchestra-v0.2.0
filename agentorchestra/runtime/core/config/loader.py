@@ -6,7 +6,7 @@
 import os
 from typing import Any, Dict, Optional
 
-from .utils import safe_json_load
+from agentorchestra.runtime.core.utils import safe_json_load
 
 # 需要脱敏的配置键（API Key、密钥等）
 SENSITIVE_KEYS = {

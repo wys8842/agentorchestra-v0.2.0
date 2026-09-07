@@ -14,7 +14,7 @@ import threading
 import time
 from typing import Any, Callable, List, Optional
 
-from .config_loader import ConfigLoader
+from agentorchestra.runtime.core.config.loader import ConfigLoader
 
 _logger = logging.getLogger("agentorchestra.core.hot_config")
 

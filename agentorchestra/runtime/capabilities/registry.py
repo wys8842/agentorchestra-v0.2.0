@@ -73,7 +73,7 @@ class CapabilityRegistry:
         for cap in reversed(list(self._caps.values())):
             try:
                 cap.uninstall(ctx)
-            except Exception as e:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 pass
 
 

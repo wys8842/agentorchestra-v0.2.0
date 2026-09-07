@@ -9,9 +9,9 @@
 - 字段级权限（field-level access control）
 """
 
-from typing import Any, Dict, List, Optional, Set
 import fnmatch
 import re
+from typing import Any, Dict, List, Optional, Set
 
 
 class SecurityContext:

@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .utils import atomic_write
+from agentorchestra.runtime.core.utils import atomic_write
 
 logger = logging.getLogger("agentorchestra.core.session_store")
 
@@ -56,7 +56,7 @@ class SessionStore:
         session_name: Optional[str] = None,
     ) -> str:
         """保存会话到 JSON 文件（向后兼容）。"""
-        from .utils import generate_session_id
+        from agentorchestra.runtime.core.utils import generate_session_id
 
         session_id = generate_session_id(suffix_len=8)
 

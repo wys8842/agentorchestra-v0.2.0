@@ -13,9 +13,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
+    from agentorchestra.capability.tools.registry import ToolRegistry
     from agentorchestra.runtime.core.config import Config
     from agentorchestra.runtime.core.llm import SymphonyLLM
-    from agentorchestra.capability.tools.registry import ToolRegistry
 
 
 @dataclass

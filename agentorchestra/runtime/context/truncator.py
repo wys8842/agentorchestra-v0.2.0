@@ -13,7 +13,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from ..core.utils import measure_elapsed_ms
+from agentorchestra.runtime.core.utils import measure_elapsed_ms
 
 
 class ObservationTruncator:

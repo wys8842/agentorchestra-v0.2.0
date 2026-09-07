@@ -6,14 +6,17 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from agentorchestra.capability.tools.registry import ToolRegistry
-
-from ..core.agent import Agent
-from ..core.config import Config
-from ..core.lifecycle import EventType, LifecycleHook
-from ..core.llm import SymphonyLLM
-from ..core.message import Message
-from ..core.streaming import StreamEvent, StreamEventType
-from ..core.utils import duration_seconds, parse_tool_arguments, serialize_tool_calls
+from agentorchestra.runtime.core.agent import Agent
+from agentorchestra.runtime.core.agent.lifecycle import EventType, LifecycleHook
+from agentorchestra.runtime.core.config import Config
+from agentorchestra.runtime.core.llm import SymphonyLLM
+from agentorchestra.runtime.core.llm.streaming import StreamEvent, StreamEventType
+from agentorchestra.runtime.core.message import Message
+from agentorchestra.runtime.core.utils import (
+    duration_seconds,
+    parse_tool_arguments,
+    serialize_tool_calls,
+)
 
 DEFAULT_REACT_SYSTEM_PROMPT = """你是一个具备推理和行动能力的 AI 助手。
 
