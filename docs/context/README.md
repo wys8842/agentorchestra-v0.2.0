@@ -13,7 +13,7 @@
 7. **显式 GSSC 四阶段流水线**。`ContextBuilder` 把构建过程显式分为 Gather（多源收集）→ Select（相关性/新近性/预算筛选）→ Structure（固定模板）→ Compress（超预算截断）四步，便于观测与扩展；知识来源通过 `knowledge_provider` 回调注入，而不是硬编码检索实现。
 8. **演进收敛**。曾内置的 MemoryTool / RAGTool 检索工具已移除（文件头注明），相应职责收敛为 `knowledge_provider` 回调与 `additional_packets`；压缩方向也保留 `enable_compression=False` 的关闭开关，避免隐式行为改变调用方结果。
 
-## 这样设计的好处
+## 设计优势
 
 - Agent 侧零成本获得历史压缩、预算管理、输出截断能力：只要构造 `Agent` 就会自动装配好 `history_manager/truncator/token_counter`。
 - Token 计算本地且带缓存，调用次数为 O(新增消息)，不随历史增长变慢。

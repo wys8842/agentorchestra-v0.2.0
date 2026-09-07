@@ -11,7 +11,7 @@
 5. **业务指标先行（SLO）**：`slo.py` 把事务回滚率/时长/补偿触发/Agent 召回命中率定义为数据类 + 指标名常量，业务埋点与监控查询共用同一套命名，减少"埋点名漂移"。
 6. **与运行时 telemetry 各司其职**：`runtime/core/telemetry/` 负责 Agent 进程内运行时的结构化日志、Span/Tracer、HTTP 监控端点；`observability/` 提供可装配的收集器/渲染器/exporter 与面向会话的执行轨迹记录器，并通过装配门面 `Components` 与默认收集器回退打通两者。
 
-## 这样设计的好处
+## 设计优势
 
 - 本地调试 Agent 时打开 HTML 轨迹即可看到每步事件、Token、工具调用与错误统计，不用部署任何中间件。
 - 指标暴露只需 `get_default_collector().render()`，可被 `MonitorServer` 的 `/metrics` 或任何 HTTP 框架消费。

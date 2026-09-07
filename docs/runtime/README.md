@@ -13,7 +13,7 @@
 7. **状态与元数据统一回填**。Capability 安装结果写入共享 `state` dict，再由 `Agent.__init__` 回填成 `agent.trace_logger / agent.session_store / agent.memory_manager / agent.checkpoint_store` 等属性，旧代码直接访问的属性路径保持不变。
 8. **文档与代码目录一一对应**。`docs/runtime`、`docs/agents`、`docs/context`、`docs/core` 分别对应 `runtime/` 下的域与其子包，查找文档的路径就是查找代码的路径。
 
-## 这样设计的好处
+## 设计优势
 
 - 经典导入路径永续：升级 v0.2 布局后旧 `from agentorchestra.core.llm import SymphonyLLM` 照常工作。
 - 拆包后每个子包职责清晰，改动一个域不牵连其它域的导入图。

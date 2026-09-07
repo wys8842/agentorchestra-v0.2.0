@@ -13,7 +13,7 @@
 - **指标零侵入**：提交/回滚/补偿触发均向 `observability.metrics` 默认收集器发送 SLO 指标（如 `SLO_TX_DURATION_SECONDS`），收集器未配置（NoOp）时静默跳过。
 - **SSI 留接口不实现**：隔离级别（Serializable Snapshot Isolation）在 M1 明确排除（YAGNI），`isolation.py` 只保留抽象占位，供后续并发模型定型时扩展。
 
-## 这样设计的好处
+## 设计优势
 
 - 调用方只用 `async with coordinator.transaction(...)` + `tx.execute(...)` 即可获得幂等/补偿/锁/DLQ 全套行为，业务代码零事务知识。
 - 幂等键显式/隐式双轨：外部幂等键（如客户端请求号）与自动语义键并行，且自动键把 `request_payload` 纳入哈希，设计上规避了“同名动作不同参数被错误去重”的经典陷阱（该自动键分支 v0.2.0 存在缺陷，建议显式传键，见“使用说明”注意事项）。

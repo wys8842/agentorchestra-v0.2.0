@@ -13,7 +13,7 @@
 7. **动作可编排、可补偿**：`ActionType` 能放进 `Workflow`（顺序/条件/并行 + 参数展开）、由 `Scheduler` 定时触发、由 `TransactionManager` 以 Saga 补偿或委托 `tx.TransactionCoordinator` 保证原子性。
 8. **与 Agent 解耦，靠工具连接**：`engine.mount(registry)` 只依赖 `ToolRegistry`，不依赖任何 Agent 类型；对象/动作/函数生成的标准 Tool 一旦注册，任意 Agent 与子代理自动获得能力。
 
-## 这样设计的好处
+## 设计优势
 
 - 一份 `ObjectType` 定义同时服务：写入校验、查询 schema、LLM 工具描述（自动生成 QueryXxx / action / CallXxx 工具），一处声明处处复用。
 - 用统一词汇 + 链接校验约束"幻觉字段/幻链接"，对象图保持语义一致，查询与推理（路径遍历、接口查询）可依赖图结构。

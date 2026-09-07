@@ -12,7 +12,7 @@
 - **域内协作而不互相侵入**：`govern`、`tx`、`tenancy` 物理同属 `governance` 包：tx 的 `OptimisticLock` 自动调用 tenancy 的 `namespace_resource()` 拼租户前缀，coordinator 自动注入 govern 的 identity；各子包保持独立可导入。
 - **扁平兼容零成本**：重构后 `governance` 收纳了 `govern/tx/tenancy`；经典扁平路径（如 `agentorchestra.governance.acl`）由 `agentorchestra/_legacy.py` 别名到新物理模块，**同一个模块对象**，不重复加载、类身份一致。
 
-## 这样设计的好处
+## 设计优势
 
 - 身份/租户/权限作为“上下文”存在，业务动作代码无需感知治理细节，治理规则变更不侵入核心逻辑。
 - 对象行级授权与类型级 RBAC 分层：既能粗放授权也能精细到单行，`check()` 先试 `resource:obj_id`、失败再回退 `resource` 通配。

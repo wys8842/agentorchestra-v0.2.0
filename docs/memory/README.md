@@ -13,7 +13,7 @@
 7. **Agent 侧零改造**：记忆以 `MemorySaveTool / MemoryRecallTool` 两个标准工具暴露，注册进 `ToolRegistry` 即可；Agent 运行时可自动 recall（注入 system prompt 前缀）与自动总结（Summarizer → `remember_batch`）。
 8. **失败不阻断主流程**：Embedding 失败、Summarizer 解析失败都返回空/跳过，绝不抛到 Agent run 主流程。
 
-## 这样设计的好处
+## 设计优势
 
 - 记忆系统能叠加在任意 Agent 上，只需要一个 `MemoryManager` 实例 + 可选工具注册。
 - 从"只有 SQLite"到"进程内演示"只差一个后端参数，`memory` 后端让单测与示例零文件副作用。

@@ -13,7 +13,7 @@
 7. **可靠性原语小而独立**。重试（`retry_with_backoff` / `RetryManager`）与限流（`TokenBucket/SlidingWindow/RateLimiter`）实现无第三方运行时依赖，便于在 LLM 调用、工具调用等不稳定路径外复用。
 8. **装配与热更集中到 Components**。`agentorchestra.components.Components` 提供 store/tracer/metrics 的注册-回退默认机制，`ConfigWatch` 检测到配置变更时通过 `Components.on_config_change`/`notify_config_change` 广播，`Agent/SymphonyLLM/RateLimiter` 各自注册回调自动跟随（temperature/max_tokens/timeout/并发上限等）。
 
-## 这样设计的好处
+## 设计优势
 
 - 统一 import 面：`from agentorchestra.core import Config, SymphonyLLM, Message, get_tracer, RetryManager, ...` 一行拿到全部公共符号，经典路径不破。
 - 配置一处建模、多端消费，热更后 Agent/LLM/限流器行为自动刷新，无需重启。

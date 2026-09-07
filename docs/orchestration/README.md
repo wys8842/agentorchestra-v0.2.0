@@ -14,7 +14,7 @@
 - **沿用既有 Agent 生态**：`AgentNode` 直接包装 `runtime.core.agent.Agent`（async `arun` 优先，否则线程池 `run`）；`TaskToolGraphAdapter` 把 TaskTool 风格的 `agent_factory(agent_type)` 绑定成 Graph 节点，迁移成本最低。
 - **投递语义内置进 scheduler**：v0.1.1 起 `GraphScheduler` 自己完成 `mark_delivered → 执行 → ack → 路由下游`；独立 `DeliveryManager`（指数退避重试）作为可复用组件保留但不再被 scheduler 调用（见模块文档的 deprecated 说明）。
 
-## 这样设计的好处
+## 设计优势
 
 - 代码即图：声明式拼装、一眼可见条件分支与回环边界，配 `validate()`/`has_cycle()` 在建图期就拦截配置错误。
 - 观察性内置：`GraphResult.events` 记录每次节点 `NODE_START / NODE_FINISH / NODE_ERROR / NODE_SKIPPED`，配合回调即可做 trace/告警/测试断言。

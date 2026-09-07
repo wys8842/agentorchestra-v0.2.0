@@ -13,7 +13,7 @@
 7. **复杂能力按开关递进**。LoopAgent 从"简单模式（无工具即停 + max_steps）"起步，`enable_reflection/enable_replan/max_replans/max_consecutive_errors/stuck_threshold` 全默认关闭；避免默认行为突变破坏老用户。
 8. **统一工厂与子代理复用**。`create_agent` 用字符串选择范式；`default_subagent_factory` 供 `SubAgentCapability`/`TaskTool` 在"Agent 调用子 Agent"场景里按名创建带默认 system_prompt 的子代理。
 
-## 这样设计的好处
+## 设计优势
 
 - 装配与范式解耦：换 Agent 类型只需改工厂参数，不需要改 LLM、工具注册或配置对象。
 - 一个 Agent 同时具备同步、异步、流式三种入口，Web/CLI/长任务场景都能接。

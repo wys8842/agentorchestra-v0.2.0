@@ -12,7 +12,7 @@
 - **用量与计费解耦**：`UsageRecorder` 只做记录与导出（CSV/JSON），配额与账单语义由上层组合，内存实现自带滚动上限防无限增长。
 - **与锁/幂等自动联动**：tx 层 `OptimisticLock`/`compare_and_swap` 读写的 resource_key 一律先过 `namespace_resource()`，让“租户 A 的订单锁”天然不等于“租户 B 的订单锁”。
 
-## 这样设计的好处
+## 设计优势
 
 - 隔离规则收敛在**一个函数**（`namespace_resource`）与一个上下文管理器里，业务代码只需要“在租户上下文内跑”，不易漏拼前缀。
 - 无租户上下文时行为向后兼容（键原样返回、`get_current_or_default` 回退 `"default"`），存量代码与单租户部署无需改造。

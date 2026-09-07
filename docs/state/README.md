@@ -13,7 +13,7 @@
 - **细粒度接口 + 合并接口分层**：`interfaces.py` 按职责拆分（ThreadStore/WALStore/LockStore…）并提供组合接口 `FullCheckpointStore`；`checkpoint.py` 保留“合并版大 `CheckpointStore`”抽象以向后兼容（内存/SQL 后端均实现它）。
 - **后端可插拔且默认零配置**：`InMemoryCheckpointStore` 零依赖；默认 `get_default_store(None)` 落到本机 SQLite 文件；`in_memory://` 显式内存、`postgresql+asyncpg://` 选 PostgreSQL；全部方法保持 async 签名，上层代码后端无关。
 
-## 这样设计的好处
+## 设计优势
 
 - 恢复路径单一清晰：崩溃 → `latest_checkpoint` 续跑，或 `Snapshot` + `read_wal(after_seq)` 回放，行为可预期、可测试。
 - WAL 压缩、中断、快照都是“后台协程 + 表操作”，可随 Agent 事件循环常驻，不阻塞主流程。
