@@ -1,4 +1,4 @@
-"""OntologyEngine - 企业级 Ontology 统一入口
+"""OntologyEngine - Ontology 统一入口
 
 组织运营语义层：
 - 注册对象类型 / 动作 / 函数 / 接口
@@ -28,7 +28,7 @@ from .tool_generator import ToolGenerator
 
 
 class OntologyEngine:
-    """企业级 Ontology 引擎"""
+    """Ontology 引擎（统一注册/存储/治理/查询/工具生成）"""
 
     def __init__(
         self,

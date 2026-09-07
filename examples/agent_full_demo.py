@@ -444,7 +444,7 @@ quota_mgr.set_limit("tenant-1", 100000)
 print(f"  Quota: limit=100000")
 
 
-# ==================== 11 Ontology 企业级本体 ====================
+# ==================== 11 Ontology 本体 ====================
 section("11 Ontology: ObjectType / LinkType / ActionType / Function / Interface")
 
 Customer = ObjectType("customer", "customer_id", properties=[

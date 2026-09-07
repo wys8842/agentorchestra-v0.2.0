@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentorchestra"
 version = "0.2.0"
-description = "Symphony - 企业级多智能体编排框架"
+description = "Symphony - 多智能体应用编排框架"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

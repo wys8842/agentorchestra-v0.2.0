@@ -87,7 +87,7 @@ class MCPCapability(Capability):
 
 
 class OntologyCapability(Capability):
-    """企业级 Ontology 引擎（opt-in）"""
+    """Ontology 引擎（opt-in）"""
 
     name = "ontology"
 

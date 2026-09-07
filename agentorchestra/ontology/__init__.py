@@ -1,6 +1,6 @@
-"""ontology - 企业级 Ontology 框架
+"""ontology - 业务语义与对象操作框架
 
-为 agentorchestra 提供企业级本体与知识图谱能力，作为 Agent 的外部大脑。
+为 agentorchestra 提供本体与知识图谱能力，作为 Agent 的外部大脑。
 
 分层架构：
 - semantic: 语义层（ObjectType/LinkType/Interface）

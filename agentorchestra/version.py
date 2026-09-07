@@ -3,4 +3,4 @@
 __version__ = "0.2.0"
 __author__ = "Symphony Team"
 __email__ = "wyoshmx@163.com"
-__description__ = "Symphony - 企业级多智能体编排框架"
+__description__ = "Symphony - 多智能体应用编排框架"

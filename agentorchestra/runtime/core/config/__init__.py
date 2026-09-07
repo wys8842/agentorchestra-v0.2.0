@@ -184,7 +184,7 @@ class MCPConfig(BaseModel):
 
 
 class OntologyConfig(BaseModel):
-    """企业级 Ontology（opt-in）"""
+    """Ontology 引擎（opt-in）"""
     engine_enabled: bool = False
     engine_module: str = ""
     default_principal: str = "agent"

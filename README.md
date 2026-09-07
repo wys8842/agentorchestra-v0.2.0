@@ -1,176 +1,184 @@
 # Symphony
 
-> **当前版本 0.2.0** - 企业级多智能体编排框架
+**Symphony - 多智能体应用编排框架**：让 Agent 负责思考与决策、Ontology 承载业务语义与对象操作，
+而编排、事务、持久化、治理、多租户、可观测等横切能力以独立组件提供——既可开箱即用，也能按需插拔替换。
 
-Symphony 是一个面向生产的**企业级多智能体编排框架**：Agent 负责思考与决策，
-Ontology 承载业务语义与对象操作，而编排、事务、持久化、治理与多租户等能力
-由框架以组件化方式提供——既可开箱即用，也能按需插拔替换。
-
-从"Demo 框架"到"可生产 Multi-Agent 平台"，Symphony 内置：
-
-- **确定性编排**：Workflow / Scheduler / 图(DAG) 三种编排模型，覆盖线性流程、定时调度与条件协作
-- **可恢复事务**：WAL + Checkpoint 崩溃恢复、幂等，逆序补偿、DLQ
-- **企业治理**：对象身份 + RBAC/行级 ACL + WORM 审计
-- **多租户与配额**：租户隔离、token 配额，用量导出
-- **可插拔组件**：统一装配门面，存储 / 追踪 / 指标均可替换
+> 当前版本 **0.2.0** · Python ≥ 3.10 · MIT License
 
 ## 特性
 
-- **多智能体**：Simple / ReAct / Reflection / PlanSolve / Loop 五种范式 + 子代理机制
-- **企业级 Ontology**：对象类型 / 链接 / 动作 / 函数 / 接口，统一业务语义建模
-- **执行编排**：Workflow（流程）、Scheduler（调度）、Transaction（事务补偿）
-- **治理**：权限 / 审计 / 分支 / 物化
-- **工具生态**：内置工具（文件/计算/子代理/技能/MCP）+ 自定义 Tool
-- **上下文工程**：历史管理、Token 预算、压缩、GSSC 流水线
-- **可观测**：TraceLogger 双格式（JSONL+HTML）审计、事件系统，流式输出
-- **Skills 知识外化**：渐进式披露（元数据 + 按需 body)，节省 Token
-- **跨会话持久记忆**：长期/短期/工作之外的"跨任务记忆"，混合检索（关键词+向量）
-- **企业级运维**：结构化日志、Prometheus 指标、分布式追踪、限流、配置热更新、健康检查、监控端点
-- **企业级就绪**：
-  - **持久化与恢复**：WAL + Checkpoint + Snapshot + HITL interrupt（`state/`）
-  - **事务运行时**：幂等 + 补偿 + DLQ + 乐观锁（`tx/`）
-  - **Agent 图/DAG 通信**：条件边 + Inbox + 有界回环（`orchestration/`）
-  - **对象身份与权限**：RBAC + 行级 ACL + WORM 审计（`governance/`）
-  - **多租户**：tenant namespace 隔离 + token 配额 + 用量导出（`tenancy/`）
-  - **企业级可观测**：Prometheus 文本指标 + 可选 OTLP trace（零依赖）
+### 运行时域 `runtime/`
+
+| 能力 | 说明 |
+|------|------|
+| **Agent 五种范式** | `Simple / ReAct / Reflection / PlanSolve / Loop` + 工厂 `create_agent()` 与子代理机制 |
+| **核心运行时** | LLM 统一客户端、配置体系、消息模型、Agent 基类、可靠性、可观测 telemetry（详见 [core](docs/core/README.md)） |
+| **上下文工程** | 历史管理、Token 预算、压缩、工具输出截断、GSSC 上下文构建（详见 [context](docs/context/README.md)） |
+| **能力扩展** | `CapabilityContext / Capability` 注册表：13 个内置能力（工具、Ontology、记忆、技能、MCP、DevLog 等）可按配置启用 |
+
+### 能力域 `capability/`
+
+| 能力 | 说明 |
+|------|------|
+| **工具系统** | `Tool` 协议 + `ToolRegistry` 统一执行管道（熔断/观测/记录）、内置工具（计算/文件/子代理/技能/MCP/DevLog/TodoWrite）（详见 [tools](docs/tools/README.md)） |
+| **Skills 知识外化** | 渐进式披露：元数据 + 按需加载 SKILL.md body，节省 Token |
+| **跨会话持久记忆** | `MemoryManager` 混合检索（关键词 + 向量）、自动注入/回忆、Summarizer（详见 [memory](docs/memory/README.md)） |
+
+### 业务语义 `ontology/`
+
+对象类型 / 链接 / 接口 / 动作 / 函数 + 对象存储与索引 + 治理（安全/审计/分支）+ 流程编排（工作流/调度/事务）+ 查询引擎 +
+自动生成 Tool 挂载到任意 Agent（详见 [ontology](docs/ontology/README.md)）。
+
+### 编排域 `orchestration/`
+
+- `orch`：Agent 图 / DAG 通信（Graph、Inbox、DeliveryManager、Scheduler、事件）
+- `state`：持久化与恢复（Checkpoint / WAL / Thread / Interrupt / Snapshot，多后端）
+（详见 [orchestration](docs/orchestration/README.md)、[state](docs/state/README.md)）
+
+### 治理域 `governance/`
+
+- `govern`：对象身份与权限（Identity / RBAC / 行级 ACL / CAS）
+- `tx`：事务运行时（Coordinator / 幂等 / 补偿 / DLQ / 锁 / 隔离）
+- `tenancy`：多租户（Tenant 上下文 / 配额 / 用量计费）
+（详见 [governance](docs/governance/README.md)、[tx](docs/tx/README.md)、[tenancy](docs/tenancy/README.md)）
+
+### 可观测 `observability/`
+
+TraceLogger 双格式轨迹（JSONL + HTML）、零依赖 Prometheus 文本指标、可选 OTLP trace 导出、SLO 常量
+（详见 [observability](docs/observability/README.md)；与 `runtime/core/telemetry` 的配合见该文）。
+
+### 装配与可插拔 `components.py`
+
+统一装配门面：存储 / 追踪 / 指标 / trace 导出均可 `register_*` 替换、`Components.reset()` 还原，
+业务代码不必依赖具体实现（详见 [architecture](docs/architecture/README.md)）。
 
 ## 安装
 
 ```bash
 pip install agentorchestra            # 核心
-pip install "agentorchestra[all]"     # 全部可选依赖（Anthropic/Gemini/MCP/Neo4j/YAML）
+pip install "agentorchestra[all]"     # 全部可选依赖（Anthropic/Gemini/MCP/Neo4j/YAML/Postgres/OTel）
+pip install "agentorchestra[dev]"     # 开发：pytest / ruff / mypy
 ```
 
 ## 快速开始
 
 ```python
-from agentorchestra import ReActAgent, SymphonyLLM, ToolRegistry
+from agentorchestra.core.llm import SymphonyLLM
+from agentorchestra.core.config import Config
+from agentorchestra.tools.registry import ToolRegistry
+from agentorchestra.agents.react_agent import ReActAgent
 
-# 统一 LLM 客户端：自动按 base_url 识别提供商（OpenAI/Anthropic/Gemini 及兼容接口）
-llm = SymphonyLLM(
-    model="gpt-4o",
-    api_key="sk-xxx",
-    base_url="https://api.openai.com/v1",
-)
+# 统一 LLM 客户端：按 base_url 自动识别提供商（OpenAI/Anthropic/Gemini 及兼容接口）
+llm = SymphonyLLM(model="gpt-4o", api_key="sk-xxx", base_url="https://api.openai.com/v1")
+
 registry = ToolRegistry()
-
 agent = ReActAgent(name="Assistant", llm=llm, tool_registry=registry)
 result = agent.run("帮我分析这个项目")
 ```
 
-> 也支持从环境变量加载：`LLM_MODEL_ID` / `LLM_API_KEY` / `LLM_BASE_URL`。
-
-## 统一装配入口
-
-Symphony 提供统一的 `Components` 门面来装配和替换横切组件：
-
-```python
-from agentorchestra.components import Components
-
-# 读取（默认回退现有全局实现）
-store = Components.state_store()            # CheckpointStore
-tracer = Components.tracer()                # Tracer
-collector = Components.metrics_collector()  # 指标收集器
-
-# 替换（可插拔）
-Components.register_state_store(my_store)
-Components.enable_prometheus()              # 开启 Prometheus 指标
-Components.enable_otel_trace()            # 开启 OTLP 导出
-```
+> 也支持环境变量：`LLM_MODEL_ID / LLM_API_KEY / LLM_BASE_URL`。
+> 完整示例见 `examples/agent_full_demo.py`（可离线跑，自带 Mock 演示），压力测试脚本在 `tests/` 下。
 
 ## 架构
 
 ```
-应用层
-  └─ Agent 层（agents + core）        决策 / 工具调用 / 上下文 / 事件
-       └─ Tool 契约（tools + context）  schema / 执行 / 注入
-            └─ 业务语义层（ontology）   对象/动作/函数/接口 + 治理 + 编排
-                 └─ 数据层             数据库 / 文件 / 外部系统 / MCP
+应用层（examples / 业务代码）
+ └─ components.py            装配门面（唯一推荐的横切装配入口）
+  └─ runtime/                运行时域：agents · core · context · capabilities
+   └─ capability/            能力域：tools · skills · memory
+    └─ ontology/             业务语义：对象/动作/函数/接口 + 存储 + 治理 + 流程
+     └─ orchestration/       编排域：orch（图/DAG）· state（持久化与恢复）
+     └─ governance/          治理域：govern · tx · tenancy
+     └─ observability/       可观测：trace / metrics / otlp
 ```
+
+- 依赖方向自上而下：上层可 import 下层，下层不反向依赖上层。
+- 横切组件（governance/observability/state 等）彼此独立或只依赖更底层。
+- 唯一“什么都知道”的装配点是 `components.py`；业务包不应自行持有全局组件。
+
+### 导入路径兼容
+
+源码按领域组织，但**经典扁平导入名仍然有效**，二者解析到同一模块对象（不重复加载）：
+
+| 经典导入名（推荐在示例/文档中使用） | 新物理路径 |
+|------------------------------------|-----------|
+| `agentorchestra.agents.*` | `agentorchestra.runtime.agents.*` |
+| `agentorchestra.core.*` | `agentorchestra.runtime.core.*` |
+| `agentorchestra.context.*` | `agentorchestra.runtime.context.*` |
+| `agentorchestra.tools.*` / `skills.*` / `memory.*` | `agentorchestra.capability.*` |
+| `agentorchestra.orchestration.*` | `agentorchestra.orchestration.orch.*` |
+| `agentorchestra.state.*` | `agentorchestra.orchestration.state.*` |
+| `agentorchestra.tx.*` / `tenancy.*` | `agentorchestra.governance.tx.*` / `tenancy.*` |
+| `agentorchestra.governance.*` | `agentorchestra.governance.govern.*` |
+| `agentorchestra.observability.*` / `ontology.*` | 不变 |
+
+机制见 `agentorchestra/_legacy.py` 与 [architecture](docs/architecture/README.md)。
 
 ## 目录
 
-源码按**领域**组织在 `agentorchestra/` 下（经典扁平导入名仍可用）：
-
 ```
 agentorchestra/
-├── runtime/              # 运行时域
-│   ├── agents/           # Agent 范式（Simple/ReAct/Reflection/PlanSolve/Loop + 工厂）
-│   ├── core/             # 核心运行时（LLM/Config/Message/Agent 基类/可靠性/运维/追踪）
-│   └── context/          # 上下文工程（历史/Token 计数/GSSC/截断）
-├── capability/           # 能力域
-│   ├── tools/            # 工具系统（Tool 基类/注册表/内置工具/子代理过滤）
-│   ├── skills/           # Skills 知识外化（SkillLoader/Skill）
-│   └── memory/           # 跨会话持久记忆（Manager/混合检索/Summarizer/工具）
-├── ontology/             # 企业级 Ontology（语义/动能/存储/治理/流程/工具生成）
-├── orchestration/        # 编排域
-│   ├── orch/             # Agent 图/DAG 通信（Graph/Inbox/节点/Scheduler）
-│   └── state/            # 持久化与恢复（Checkpoint/WAL/Thread/Interrupt/Snapshot）
-├── governance/           # 治理域
-│   ├── govern/           # 对象身份与权限（Identity/ACL/Permission/CAS/WORM）
-│   ├── tx/               # 事务运行时（Coordinator/幂等/补偿/DLQ/乐观锁）
-│   └── tenancy/          # 多租户（Tenant 上下文/配额/用量导出）
-├── observability/        # 可观测性（TraceLogger + Prometheus 指标 + 可选 OTLP）
-├── components.py         # 统一装配门面（唯一推荐的横切装配入口）
-├── version.py
-└── __init__.py
+├── runtime/            # 运行时域
+│   ├── agents/         # Agent 范式 + 工厂 + 子代理
+│   ├── context/        # 上下文工程（历史/Token/GSSC/截断）
+│   ├── core/           # 核心运行时
+│   │   ├── agent/      #   Agent 基类 + 生命周期
+│   │   ├── config/     #   Config / 加载器 / 热更新
+│   │   ├── llm/        #   SymphonyLLM + 适配器 + Schema + 流式 + 防护
+│   │   ├── message/    #   Message + 会话持久化
+│   │   ├── reliability/#   retry / ratelimit
+│   │   └── telemetry/  #   logging / metrics / monitor / health / tracing
+│   └── capabilities/   # Capability 注册表 + 内置能力
+├── capability/         # 能力域
+│   ├── tools/          # 工具系统（含 builtin 内置工具）
+│   ├── skills/         # Skills 知识外化
+│   └── memory/         # 跨会话持久记忆
+├── ontology/           # 业务语义（semantic/kinetic/storage/governance/process）
+├── orchestration/      # 编排域
+│   ├── orch/           # Agent 图/DAG 通信
+│   └── state/          # Checkpoint/WAL/Thread/Interrupt/Snapshot
+├── governance/         # 治理域
+│   ├── govern/         # 身份与权限（Identity/ACL/Permission/CAS）
+│   ├── tx/             # 事务运行时
+│   └── tenancy/        # 多租户
+├── observability/      # 可观测（trace/metrics/OTLP/SLO）
+├── components.py       # 装配门面
+├── _legacy.py          # 经典导入名 → 领域路径兼容层
+└── version.py
 ```
 
-> **兼容性**：经典扁平公共 API 保持不变——`agentorchestra.core.*`、
-> `agentorchestra.tools.*`、`agentorchestra.state.*`、`agentorchestra.tx.*`、
-> `agentorchestra.orchestration.*` 等导入会自动映射到上面的领域化物理路径
-> （见 `agentorchestra/_legacy.py`）。同一模块无论走经典名还是新物理名，
-> 得到的是同一个模块对象。
+## 模块文档
 
-## 公共 API
+每个模块文档都按固定骨架编写：**定位 → 设计动机与原则 → 好处 → 模块构成 → 功能清单 → 使用说明 → 模块关系 → 测试**。
 
-```python
-# 核心组件
-from agentorchestra import (
-    SymphonyLLM,      # 统一 LLM 客户端
-    Config,           # 配置管理
-    Message,          # 消息类型
-    SymphonyException, # 异常基类
+| 领域 | 模块 | 文档 |
+|------|------|------|
+| 总览 | 架构设计 | [architecture](docs/architecture/README.md) |
+| 运行时 | runtime 域 | [runtime](docs/runtime/README.md) |
+| | agents | [agents](docs/agents/README.md) |
+| | core | [core](docs/core/README.md) |
+| | context | [context](docs/context/README.md) |
+| 能力 | tools | [tools](docs/tools/README.md) |
+| | memory | [memory](docs/memory/README.md) |
+| 语义 | ontology | [ontology](docs/ontology/README.md) |
+| 编排 | orchestration | [orchestration](docs/orchestration/README.md) |
+| | state（持久化） | [state](docs/state/README.md) |
+| 治理 | governance | [governance](docs/governance/README.md) |
+| | tx（事务） | [tx](docs/tx/README.md) |
+| | tenancy（多租户） | [tenancy](docs/tenancy/README.md) |
+| 可观测 | observability | [observability](docs/observability/README.md) |
+| 横切 | 横切能力与演进指南 | [enterprise](docs/enterprise/README.md) |
 
-    # Agent 范式
-    SimpleAgent,
-    ReActAgent,
-    ReflectionAgent,
-    PlanSolveAgent,
+完整的模块索引与阅读顺序见 [docs/README.md](docs/README.md)。
 
-    # 工具系统
-    ToolRegistry,
-    global_registry,
-    CalculatorTool,
-    calculate,
-)
-```
-
-## 文档
-
-| 模块                 | 文档                                                                                        |
-| ------------------ | ----------------------------------------------------------------------------------------- |
-| core               | [docs/core/README.md](docs/core/README.md)                                                |
-| agents             | [docs/agents/README.md](docs/agents/README.md)                                            |
-| tools              | [docs/tools/README.md](docs/tools/README.md)                                              |
-| context            | [docs/context/README.md](docs/context/README.md)                                          |
-| observability      | [docs/observability/README.md](docs/observability/README.md)                              |
-| memory             | [docs/memory/README.md](docs/memory/README.md)                                            |
-| ontology           | [docs/ontology/README.md](docs/ontology/README.md)                                        |
-| state（持久化）         | [docs/state/README.md](docs/state/README.md)                                              |
-| tx（事务运行时）          | [docs/tx/README.md](docs/tx/README.md)                                                    |
-| orchestration（图通信） | [docs/orchestration/README.md](docs/orchestration/README.md)                              |
-| governance（权限）     | [docs/governance/README.md](docs/governance/README.md)                                    |
-| tenancy（多租户）       | [docs/tenancy/README.md](docs/tenancy/README.md)                                          |
-| 企业级路线图             | [docs/enterprise/README.md](docs/enterprise/README.md) + [specs](docs/superpowers/specs/) |
-
-## 开发
+## 开发与质量
 
 ```bash
-pip install "agentorchestra[dev]"
-pytest              # 运行测试
-mypy agentorchestra # 类型检查
-ruff check .        # 代码检查
+pip install -e ".[dev]"
+pytest tests                # 单元/集成测试
+ruff check agentorchestra   # 代码检查
+python tests/stress_test.py            # 压力测试（存储/并发/工作流/调度/工具）
+python tests/stress_report.py          # 全链路压力 + 生成 docs/test_report.json
 ```
 
 ## License
