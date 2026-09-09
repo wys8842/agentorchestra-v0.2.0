@@ -272,3 +272,103 @@ mypy agentorchestra            # 类型检查（可选；dev 依赖含 mypy）
 | 多租户与配额 | [docs/tenancy/README.md](../tenancy/README.md) |
 | 可观测性 | [docs/observability/README.md](../observability/README.md) |
 | 横切能力与上线/演进指南 | [docs/enterprise/README.md](../enterprise/README.md) |
+
+
+## 9. 整体运行链路：组件是如何串联的
+
+上面那十几个功能点同处一个框架里，靠"**自上而下的方向 + 显式注入 + 唯一的装配门面**"串起来。下面用一条真实的端到端主路径把它们按触发顺序串一遍，并指出每一跳对应哪个域、哪个文件、它和谁协作。
+
+### 9.1 一次 `ReActAgent.run()` 的真实旅程
+
+1. **应用层**（你的代码 / `examples/`）：`ReActAgent(name=..., llm=SymphonyLLM(...), tool_registry=ToolRegistry()).run("...")`
+2. **运行时域 · Agent 基类**（`runtime/core/agent/base.py`）在 `__init__` 中按需懒加载：
+   - `HistoryManager` + `TokenCounter` 来自 `runtime/context/*`（上下文工程）
+   - `ToolRegistry` 来自 `capability/tools/registry.py`（能力域）
+   - `TraceLogger` 来自 `runtime/core/telemetry/logging.py`（核心 telemetry），高层轨迹由 `observability/TraceLogger` 提供
+   - `CheckpointStore` 来自 `orchestration/state/*`（编排域）—— `state_checkpoint_enabled=True` 才挂
+3. **`agent.run()`** 把用户消息写进历史（`add_message` → `HistoryManager.append` + Token 计数 + 可能压缩 + 周期 `SessionStore` 保存）
+4. **调用 LLM**：`SymphonyLLM`（`runtime/core/llm/__init__.py`）→ 适配器（`runtime/core/llm/adapters.py::BaseLLMAdapter`），并通过 `runtime/core/telemetry/tracing.py::get_tracer` 起一个 `Span` 记 token / 延迟
+5. **如需调用工具**：`ToolRegistry.execute_tool(name, args)`（`capability/tools/registry.py`）按序经过：
+   - `tool_filter`（访问控制）
+   - `CircuitBreaker`（熔断）
+   - 真实 `Tool.run`，结果封装为 `ToolResponse`（含错误码 `ToolErrorCode`）
+   - 输出经 `ObservationTruncator`（`runtime/context/truncator.py`）按字节/行数截断
+   - 把结果回填到 messages，进入下一轮
+6. **可观测性**：
+   - `TraceLogger` 写 JSONL + HTML 轨迹
+   - `MetricsCollector`（通过 `Components.metrics_collector()` 拿到）记录工具/动作计数与延迟，渲染为 Prometheus 文本
+   - 可选 `OTLPHttpJsonExporter` 把 `Span` 发到 Jaeger / Tempo
+   - **业务代码与 Agent 都不知道具体实现**，全部经 `Components` 装配
+7. **持久化与恢复**（编排域 `state`）：每步完成后 `state.checkpoint(...)` 落 `CheckpointStore`（默认 SQLite，`backends/sqlite_backend.py`），写 `WAL`（`orchestration/state/wal.py`）；恢复时从 `Thread` / `Snapshot` 重建
+8. **治理**：
+   - `governance/govern/permission.py::PermissionChecker` 在动作执行前做 RBAC + 行级 ACL
+   - `governance/govern/identity.py::IdentityService` + `ACLManager` 维护身份
+   - `governance/tenancy/tenant.py::TenantManager` + `QuotaManager` + `UsageRecorder` 维持租户 / 配额 / 用量
+9. **事务**（`governance/tx`）：`TransactionCoordinator.execute([...])` 协调幂等 / 补偿 / DLQ / 乐观锁；状态全落到 `orchestration/state.records` 与 `WAL`
+10. **运行时域的 Capability 插槽**（`runtime/capabilities/`）：`trace / skills / mcp / ontology / checkpoint / ...` 作为可插拔的 `Capability`，Agent 启动时按配置自动注册——这就把"领域能力"以可插拔方式挂到 Agent 上
+11. **编排域 `orchestration/orch`**：需要多 Agent 协作时用 `Graph` + `Inbox` + `DeliveryManager` + 事件（`events.py`）组成 DAG/图，节点类型 `AgentNode / RouterNode / FunctionalNode / MergeNode`；`GraphScheduler` 触发定时执行，中间状态由 `state/` 落地
+
+### 9.2 事务链路（governance/tx ↔ orchestration/state）
+
+`TransactionCoordinator.execute([...])` 走过的实际步骤：
+
+1. 用 `idempotency` 键去重（`IdempotencyRecord` 写入 `orchestration/state/records.py`）
+2. 乐观锁 `lock.py` 在 state 上 CAS
+3. 顺序执行 actions；失败按反向 `CompensatingAction` 回退
+4. 不可补偿的进 `DLQ`（`dlq.py`）
+5. 全程写 `WALEntry`（`state.wal`），崩溃后可恢复
+
+### 9.3 持久化与恢复（orchestration/state）
+
+- 默认零依赖 SQLite（`backends/sqlite_backend.py`）；要 PG 用 `postgres_backend.py`；纯内存用 `memory_backend.py`；统一用 `get_default_store(db_url)` 选择
+- `Checkpoint` + `WAL` + `Thread` + `Snapshot` + `records` + `Interrupt`（HITL 人工接管）+ `backends` 全部走同一 `CheckpointStore` 抽象
+
+### 9.4 编排（orchestration/orch）
+
+`Graph` 由 `AgentNode / RouterNode / MergeNode / FunctionalNode` 组成；节点间消息走 `Inbox` + `DeliveryManager`，事件通过 `events.NodeEvent / NodeEventType` 携带状态。`GraphScheduler` 触发 `Workflow`，中间结果在 `state/` 落地
+
+### 9.5 可观测如何在每一步挂钩
+
+- `runtime/core/telemetry/` 提供基础件（`get_logger / Span / Tracer / get_metrics`），不依赖任何外部包
+- `observability/` 在它之上加高层实现：`TraceLogger`（JSONL+HTML）、Prometheus 文本收集器、`OTLPHttpJsonExporter`、SLO
+- 装配只发生在 `components.py` 一个入口；业务代码通过 `Components.tracer() / metrics_collector()` 拿到的是接口；要替换就 `register_*`
+
+### 9.6 治理与多租户
+
+- `governance/govern/identity.py::IdentityService` + `ACLManager` + `PermissionChecker`：身份 + 行级 ACL
+- `governance/tenancy/tenant.py::TenantManager` + `QuotaManager` + `UsageRecorder`：租户上下文 / 配额 / 用量
+- `governance/tx` 在事务里查租户与配额
+
+### 9.7 兼容层（_legacy.py）
+
+`agentorchestra/_legacy.py` 维护"经典名 → 领域路径"映射，根 `__init__.py` 导入时 `install_legacy_aliases()` 装一个 `MetaPathFinder`，拦截经典名导入并指向规范物理路径的同一模块对象。所以
+- `from agentorchestra.agents.simple_agent import SimpleAgent`
+- `from agentorchestra.runtime.agents.simple_agent import SimpleAgent`
+
+拿到的是**同一个类**，旧仓库代码一行不动也能跑
+
+### 9.8 把某一块换成自己的实现
+
+`components.py` 是唯一的"装配地图"。要换存储 / 追踪 / 指标 / trace 导出，只要在 Agent 启动前：
+
+```python
+Components.register_state_store(my_store_factory)
+Components.register_tracer(my_tracer_factory)
+Components.register_metrics_collector(my_collector_factory)
+Components.register_otel_exporter(my_exporter_factory)
+Components.enable_prometheus()  # 开启 Prometheus 文本指标
+Components.enable_otel_trace(endpoint="http://jaeger:4318", service_name="agentorchestra")  # 开启 OTLP trace
+```
+
+之后业务代码 **零改动** 即可看到自定义实现生效。
+
+---
+
+简而言之，框架的"串接方式"是：
+- **方向** = 自上而下 + 显式注入；`components.py` 唯一知道横切组件的"默认实现/可替换实现/装配组合"
+- **依赖** = 用 `ToolRegistry` / `CheckpointStore` / `Tracer` / `IdentityContext` 这类**抽象**在领域间传递，物理实现通过 `components.py` 懒加载
+- **可发现** = 任何跨域能力都经"门面 + 注册"两步（`register_*` / `enable_*`），让业务代码只与接口对话
+- **向后兼容** = `_legacy.py` 把经典名映射到新物理路径，单模块对象
+- **可观测** = 所有跨域能力都能在 `Components.tracer / metrics_collector / otel_exporter` 三处挂钩
+
+这也就是为什么 6 个域能在一个框架里和平共处。
