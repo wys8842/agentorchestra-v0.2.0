@@ -632,6 +632,36 @@ class SQLAlchemyCheckpointStore(CheckpointStore):
                 resolved_at=row.resolved_at,
             )
 
+    async def list_interrupts(
+        self, status: Optional[str] = None, thread_id: Optional[str] = None
+    ) -> List[Interrupt]:
+        """列出中断（InterruptResumer 用），可按 status / thread_id 过滤。"""
+        assert self._engine is not None
+        from sqlalchemy import select
+
+        stmt = select(_InterruptRow)
+        if status is not None:
+            stmt = stmt.where(_InterruptRow.status == status)
+        if thread_id is not None:
+            stmt = stmt.where(_InterruptRow.thread_id == thread_id)
+
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(stmt)).all()
+        return [
+            Interrupt(
+                token=row.token,
+                thread_id=row.thread_id,
+                checkpoint_id=row.checkpoint_id,
+                reason=row.reason,
+                payload=loads_json(row.payload_json) if row.payload_json else {},
+                status=InterruptStatus(row.status),
+                response=loads_json(row.response_json) if row.response_json else None,
+                created_at=row.created_at,
+                resolved_at=row.resolved_at,
+            )
+            for row in rows
+        ]
+
     # ---------------- 锁（M1） ----------------
 
     async def acquire_lock(
