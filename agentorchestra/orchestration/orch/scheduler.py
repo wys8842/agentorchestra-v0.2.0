@@ -234,8 +234,10 @@ class GraphScheduler:
                 "task": output.result,
                 **(output.data or {}),
             }
+            priority = (output.data or {}).get("priority", 0)
             await inbox.send(graph_id, thread_id, edge.target, content,
-                             from_node=node_name, condition=edge.when)
+                             from_node=node_name, condition=edge.when,
+                             priority=priority)
 
     def _get_fanin_expected(self, graph: Any, target_node: str) -> int:
         """获取目标节点的预期上游数量（用于 fan-in barrier）"""

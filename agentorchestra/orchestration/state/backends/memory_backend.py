@@ -377,7 +377,7 @@ class InMemoryCheckpointStore(CheckpointStore):
                 if m.expired:
                     continue
                 result.append(m)
-            result.sort(key=lambda m: m.created_at)
+            result.sort(key=lambda m: (-m.priority, m.created_at))
             return result[:limit]
 
     async def mark_delivered(self, msg_id: str, ack_token: str) -> None:

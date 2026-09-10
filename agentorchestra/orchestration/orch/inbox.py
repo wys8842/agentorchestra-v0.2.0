@@ -1,6 +1,7 @@
 """inbox - 持久化消息队列 + 回执 + 重试（M2 图通信）。
 
 基于 CheckpointStore.inbox_messages / inbox_acks 表。
+支持优先级（高→低）与 max_depth 背压。
 """
 
 from __future__ import annotations
@@ -15,23 +16,31 @@ if TYPE_CHECKING:
     from ..state.checkpoint import CheckpointStore
 
 
-class Inbox:
-    """持久化 Inbox。
+class InboxDepthExceeded(Exception):
+    """Inbox 队列深度超限（背压信号）。
 
-    用法：
-        inbox = Inbox(store)
-        msg_id = await inbox.send(graph_id, thread_id, "from", "to", {"task": "..."})
-        msgs = await inbox.poll(thread_id, to_node="coder")
-        await inbox.ack(msg_id, ack_token)
+    调用方（scheduler._route_downstream）应捕获此异常停止向下游投递，
+    并把当前节点标记为错误。
     """
+
+
+class Inbox:
+    """持久化 Inbox（M2 图通信），支持优先级与队列深度上限。"""
 
     def __init__(
         self,
         store: "CheckpointStore",
-        default_ttl_seconds: int = 604800,  # 7 天
+        default_ttl_seconds: int = 604800,
+        max_depth: int = 0,
     ):
         self.store = store
         self.default_ttl_seconds = default_ttl_seconds
+        self.max_depth = max_depth
+
+    async def depth(self, thread_id: str) -> int:
+        """返回指定 thread 当前 queued 消息数（用于背压检查）。"""
+        msgs = await self.store.list_pending_messages(thread_id, limit=1_000_000)
+        return len(msgs)
 
     async def send(
         self,
@@ -42,8 +51,15 @@ class Inbox:
         from_node: Optional[str] = None,
         condition: Optional[str] = None,
         ttl_seconds: Optional[int] = None,
+        priority: int = 0,
     ) -> str:
-        """入队一条消息。返回 msg_id。"""
+        """入队一条消息（priority 越高越先被 poll，默认 0）。"""
+        if self.max_depth > 0:
+            cur = await self.depth(thread_id)
+            if cur >= self.max_depth:
+                raise InboxDepthExceeded(
+                    f"thread {thread_id} inbox depth {cur} >= max {self.max_depth}"
+                )
         msg_id = f"msg-{uuid.uuid4().hex[:12]}"
         ttl = ttl_seconds if ttl_seconds is not None else self.default_ttl_seconds
         msg = InboxMessage(
@@ -54,6 +70,7 @@ class Inbox:
             to_node=to_node,
             content=content,
             condition=condition,
+            priority=priority,
             status="queued",
             expires_at=datetime.now() + timedelta(seconds=ttl),
         )
@@ -70,22 +87,19 @@ class Inbox:
         return await self.store.list_pending_messages(thread_id, to_node, limit)
 
     async def mark_delivered(self, msg_id: str) -> str:
-        """标记投递，返回 ack_token。"""
         ack_token = f"ack-{uuid.uuid4().hex[:12]}"
         await self.store.mark_delivered(msg_id, ack_token)
         return ack_token
 
     async def ack(self, msg_id: str, ack_token: Optional[str] = None,
                   status: str = "acked") -> None:
-        """写回执。"""
         await self.store.ack_message(msg_id, ack_token, status)
 
     async def mark_failed(self, msg_id: str, error: str, attempts: int) -> None:
         await self.store.mark_failed(msg_id, error, attempts)
 
     async def cleanup(self) -> int:
-        """清理过期消息。"""
         return await self.store.delete_expired_messages()
 
 
-__all__ = ["Inbox"]
+__all__ = ["Inbox", "InboxDepthExceeded"]

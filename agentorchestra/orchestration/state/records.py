@@ -107,6 +107,7 @@ class InboxMessage:
     content: Dict[str, Any]
     from_node: Optional[str] = None
     condition: Optional[str] = None
+    priority: int = 0               # 优先级（高→低），默认 0
     status: str = "queued"
     attempts: int = 0
     created_at: datetime = field(default_factory=datetime.now)

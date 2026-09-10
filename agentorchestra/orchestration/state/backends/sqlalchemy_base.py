@@ -200,6 +200,7 @@ class _InboxMessageRow(Base):
     to_node: Mapped[str] = mapped_column(String(128), nullable=False)
     content_json: Mapped[str] = mapped_column(Text, nullable=False)
     condition: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -1054,6 +1055,7 @@ class SQLAlchemyCheckpointStore(CheckpointStore):
                     to_node=msg.to_node,
                     content_json=dumps_json(msg.content),
                     condition=msg.condition,
+                    priority=msg.priority,
                     status=msg.status,
                     attempts=msg.attempts,
                     created_at=msg.created_at,
@@ -1074,7 +1076,8 @@ class SQLAlchemyCheckpointStore(CheckpointStore):
             )
             if to_node is not None:
                 stmt = stmt.where(_InboxMessageRow.to_node == to_node)
-            stmt = stmt.order_by(_InboxMessageRow.created_at.asc()).limit(limit)
+            stmt = stmt.order_by(_InboxMessageRow.priority.desc(),
+                                  _InboxMessageRow.created_at.asc()).limit(limit)
             rows = (await conn.execute(stmt)).all()
             return [self._row_to_inbox_msg(r) for r in rows]
 
@@ -1088,6 +1091,7 @@ class SQLAlchemyCheckpointStore(CheckpointStore):
             to_node=r.to_node,
             content=loads_json(r.content_json),
             condition=r.condition,
+            priority=getattr(r, "priority", 0),
             status=r.status,
             attempts=r.attempts,
             created_at=r.created_at,
