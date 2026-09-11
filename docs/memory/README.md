@@ -32,9 +32,9 @@
 | `capability/memory/manager.py` | 统一入口 | `MemoryManager`（`from_config/remember/recall/...`） |
 | `capability/memory/summarizer.py` | 会话 → 记忆候选 | `Summarizer`、`MemoryCandidate` |
 | `capability/memory/tools.py` | Agent 工具形态 | `MemorySaveTool`、`MemoryRecallTool` |
-| `capability/memory/tiered_memory.py` | 三级缓存辅助（独立） | `MemoryTier`、`LRUCache`、`TieredMemory`（该文件自带同名 `MemoryEntry`，与 models 版不同） |
+| `capability/memory/tiered_memory.py` | 三级缓存引擎（独立，已闭环） | `MemoryTier`、`CacheEntry`（别名 `MemoryEntry`）、`StorageAdapter`、`InMemoryTierStorage`、`LRUCache`、`TieredMemory` |
 
-注意：`tiered_memory.py` 是一套独立的"L1 进程内 LRU / L2 SQLite / L3 长驻"缓存实现，自带字段不同的 `MemoryEntry`，目前不参与 `MemoryManager` 链路，也未被包 `__init__` 导出，需要时按需 import。
+注意：`tiered_memory.py` 是一套独立的"L1 进程内 LRU / L2 有界 / L3 长驻"三级缓存引擎（设计见 `docs/memory/tiered-memory-design.md`），目前不参与 `MemoryManager` 链路，也未被包 `__init__` 导出，需要时按需 import。它自带 `CacheEntry`（旧名 `MemoryEntry`，与 models 版字段不同）。闭环特性：L1 淘汰回写 L2、L2 容量淘汰下沉 L3（不丢数据）、逐级读命中上提 L1、访问计数达阈值沉淀 L3、`flush()` 强制落 L3、单个 RLock 线程安全、外部适配器故障优雅降级。L2/L3 通过 `StorageAdapter` 协议注入（默认 `InMemoryTierStorage`；SQLite/文件适配器可自行实现后注入）。
 
 ## 功能清单
 
